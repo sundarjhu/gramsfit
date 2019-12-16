@@ -13,6 +13,7 @@ data = Table.read('data.fits', format = 'fits')
 #Choose 10 random sources from the data file (this speeds up the fit)
 k = np.random.choice(len(data), size = 10)
 data = data[k]
+data['FITFLAG'][:, 0:3] = False #(optional) Do not fit the first four wavelengths for all the sources
 #The data file above has the ID, FITFLAG, and DKPC columns, so they're set to None below. Also, set scale to False for now.
 fit = gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False)
 ```
