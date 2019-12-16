@@ -236,24 +236,24 @@ def get_pars(grid, chisq, modelindex, scale, flag, n_accept = 100):
     return p, p_err
 
 def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False):
-    #these inputs can either be a string pointing to the full path of the file,
+    #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
     if isinstance(data, str):
         d = Table.read(data, format = 'fits')
-        data = d
+        data = d.copy()
         d = 0.
     if isinstance(ogrid, str):
         d = Table.read(ogrid, format = 'fits')
-        ogrid = d
+        ogrid = d.copy()
         d = 0.
     if isinstance(cgrid, str):
         d = Table.read(cgrid, format = 'fits')
-        cgrid = d
+        cgrid = d.copy()
         d = 0.
     #
     ndata = len(data)
     if 'ID' not in data.columns:
-        data['ID'] = np.arange(len(data))
+        data['ID'] = [str(i+1) for i in np.arange(len(data))]
     if FITFLAG is not None:
         if FITFLAG.ndim == 1:
             data['FITFLAG'] = np.repeat(FITFLAG[:, np.newaxis], ndata, axis = 1)
