@@ -1,10 +1,10 @@
 from astropy.table import Table
-from astropy.io import ascii
+#from astropy.io import fits
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize
+from gramsfit_utils import *
 
-#def chisq2d(s, fdata, dfdata, uplim, fmod):
 def chisq2d(s, data, fmod):
     """return chisq for one source and an entire model grid and 
     a vector of scale factors, one for each model"""
@@ -123,21 +123,18 @@ def get_chemtype(chisq_o, chisq_c, CFIT_TOL = 1.0):
                                 chisq_o[i, 0]/CFIT_TOL)*1] for i in range(ndata)])
     return chemtype
 
-def par_summary(data, ogrid, cgrid, modelindex_o, modelindex_c, \
-                scale_o, scale_c, flag_o, flag_c, chemtype, n_models = 100):
+def par_summary(plt, data, grid, fit, n_models = 100):
     """Boxplot summaries for the best-fit models of both chemistries to a single source.
     For each chemistry, the n_models models with the lowest chisq values are selected.
     For this to be true, the modelindex, scale, and flag arrays must already be sorted 
     in ascending order of chisq.
+    plt: plot object instantiated before being passed into this module.
     data: 1-row astropy table. 
     modelindex_, scale_, flag_: 1 x ngrid numpy arrays where ngrid is 
         the number of models in that grid.
     chemtype: 1-element array ('o' or 'c') corresponding to given source.
     ogrid, cgrid: the full grid of models for both chemical types."""
-    from ss_setPlotParams import setPlotParams
-    plt = setPlotParams()
     plt.figure(figsize = (12, 3))
-
     def draw_plot(plt, data, edge_color, fill_color, data_labels = None):
         bp = plt.boxplot(data, labels = data_labels, patch_artist=True, \
                          meanline = True, showmeans = True)
@@ -146,46 +143,24 @@ def par_summary(data, ogrid, cgrid, modelindex_o, modelindex_c, \
         for patch in bp['boxes']:
             patch.set(facecolor=fill_color)
         return bp
-
-    #draw the O-rich model boxplots
-    flag = flag_o
-    g = ogrid[modelindex_o[flag]][0:n_models]
-    tau = g['tau10']
-    taulabel = r"$\bm{-\log{\tau_{10}}}$"
-    s = scale_o[flag][0:n_models]
-    d = [np.log10(s * g['Lum']/1e3), np.log10(g['Teff']/1e3), np.log10(g['Rin']), \
-         -np.log10(g['tau1']), -np.log10(tau), np.log10(np.sqrt(s) * g['MLR']/1e-13), \
-         np.log10(g['Tin']/1e3), np.log10(s)]
-    d_labels = [r"$\bm{\log{(L/10^3} \textbf{\textrm{L}}_\bm{\odot})}$", \
-                r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
-                r"$\bm{\log{(R_\textbf{\textrm{in}}/R_\textbf{\textrm{star}})}}$", \
-                r"$\bm{-\log{\tau_1}}$", taulabel, \
-                r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
-                r"$\bm{\log{(T_\textbf{\textrm{in}}/10^3 \textbf{\textrm{K}})}}$", \
-                r"$\bm{\log{s}}$"]
-    bp = draw_plot(plt, d, 'blue', 'None', data_labels = d_labels)
-    #draw the C-rich model boxplots
-    flag = flag_c
-    g = cgrid[modelindex_c[flag]][0:n_models]
-    tau = g['tau11_3']
-    taulabel = r"$\bm{-\log{\tau_{11.3}}}$"
-    s = scale_c[flag][0:n_models]
-    d = [np.log10(s * g['Lum']/1e3), np.log10(g['Teff']/1e3), np.log10(g['Rin']), \
-         -np.log10(g['tau1']), -np.log10(tau), np.log10(np.sqrt(s) * g['MLR']/1e-13), \
-         np.log10(g['Tin']/1e3), np.log10(s)]
-    d_labels = [r"$\bm{\log{(L/10^3} \textbf{\textrm{L}}_\bm{\odot})}$", \
-                r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
-                r"$\bm{\log{(R_\textbf{\textrm{in}}/R_\textbf{\textrm{star}})}}$", \
-                r"$\bm{-\log{\tau_1}}$", taulabel, \
-                r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
-                r"$\bm{\log{(T_\textbf{\textrm{in}}/10^3 \textbf{\textrm{K}})}}$", \
-                r"$\bm{\log{s}}$"]
-    bp = draw_plot(plt, d, 'red', 'None', data_labels = d_labels)
-    #
+    lamref = {'o': '10', 'c': '11.3'}
+    #One boxplot for each chemical type
+    for t in ['o', 'c']:
+        g = grid[t][fit['modelindex_' + t]][0:n_models]
+        d = [np.log10(fit['scale_' + t][0:n_models] * g['Lum'] / 1e3), np.log10(g['Teff'] / 1e3), np.log10(g['Rin']), \
+             -np.log10(g['tau1']), -np.log10(g['tau' + lamref[t].replace('.', '_')]), \
+             np.log10(np.sqrt(fit['scale_' + t][fit['flag_' + t]][0:n_models]) * g['MLR'] / 1e-13), \
+             np.log10(g['Tin'] / 1e3), np.log10(fit['scale_' + t][fit['flag_' + t]][0:n_models])]
+        d_labels = [r"$\bm{\log{(L/10^3} \textbf{\textrm{L}}_\bm{\odot})}$", \
+                    r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
+                    r"$\bm{\log{(R_\textbf{\textrm{in}}/R_\textbf{\textrm{star}})}}$", \
+                    r"$\bm{-\log{\tau_1}}$", r"$\bm{-\log{\tau_{" + lamref[t] + "}}}$", \
+                    r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
+                    r"$\bm{\log{(T_\textbf{\textrm{in}}/10^3 \textbf{\textrm{K}})}}$", r"$\bm{\log{s}}$"]
+        bp = draw_plot(plt, d, 'blue', 'None', data_labels = d_labels)
     plt.xticks(fontsize = 8)
     plt.title("gramsfit parameter summary ({} best-fit models) for source {} (chemtype = {})".\
-              format(n_models, data['ID'], chemtype), fontsize = 12)
-    plt.show(block = False)
+              format(n_models, data['ID'], fit['chemtype']), fontsize = 12)
 
 def get_pars(grid, chisq, modelindex, scale, flag, n_accept = 100):
     """Given the chi-square and indices into the model grid, return the 
@@ -235,7 +210,8 @@ def get_pars(grid, chisq, modelindex, scale, flag, n_accept = 100):
             pass
     return p, p_err
 
-def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False):
+def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
+             force_chemtype = None):
     #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
     if isinstance(data, str):
@@ -265,7 +241,11 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
         else:
             data['DKPC'] = np.repeat(DKPC, ndata)
     #Scale data fluxes to LMC distance (distance at which models are computed)
-    distscale = (np.repeat(data['DKPC'][:, np.newaxis], data['FLUX'].shape[1], axis = 1)/50.12)**2
+    try:
+        modeldkpc = float(ogrid.meta['DISTKPC'])
+    except:
+        modeldkpc = 50.12
+    distscale = (np.repeat(data['DKPC'][:, np.newaxis], data['FLUX'].shape[1], axis = 1)/modeldkpc)**2
     data['FLUX'] *= distscale
     data['DFLUX'] *= distscale
 
@@ -300,6 +280,17 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
                 names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', \
                          'modelindex_c', 'scale_o', 'scale_c', 'flag_o', 'flag_c', \
                          'pars_o', 'pars_o_err', 'pars_c', 'pars_c_err'))
+
+    if force_chemtype is not None:
+        nforce = len(force_chemtype)
+        if nforce == 1:
+            force_chemtype = np.repeat(force_chemtype, ndata)
+        ct = np.array([f.strip().lower() for f in list(force_chemtype)])
+        if ((ct == 'o') & (ct == 'c')).sum() < len(ct):
+            raise ValueError("ERROR! Chemical type can only be either 'O' or 'C'!")
+        else:
+            print("Forcing chemical types as specified by force_chemtype...")
+            fit.chemtype = ct
 
     #return chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c, \
     #    flag_o, flag_c, po, po_err, pc, pc_err
