@@ -21,10 +21,13 @@ def setPlotParams():
     plt.rcParams.update({'figure.max_open_warning': 0})
     return plt
 
-def makeFilterSet(infile = 'filters.csv', libraryFile = 'filters.hd5'):
+def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filters.hd5'):
     """Download filter transmission curves from the Spanish Virtual Observatory.
     The resulting filter library is saved as an hd5 file, to be ingested into pyphot.
-    INPUT: infile, a two-column CSV file of which the second column must contain
+    INPUTS:
+           1) filterNames, a list of the filter names as on the SVO/VOSA site. If specified, infile
+           is ignored.
+           2) infile, a two-column CSV file of which the second column must contain
            must contain the names of the SVO/VOSA filter files to download.
            The first column is not currently used, but can contain identifying information
            for each filter that connects it back to the data.
@@ -37,23 +40,26 @@ def makeFilterSet(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         is a photon counter (DetectorType value = "1"). We read in the entire file and check for the occurrence
         of this line and set the detector type accordingly.
     """
-    tin = Table.read(infile, format = 'csv', names = ('column', 'filtername'))
+    if filterNames == []:
+        tin = Table.read(infile, format = 'csv', names = ('column', 'filtername'))
+        filterNames = list(tin['filtername'])
     url = 'http://svo2.cab.inta-csic.es//theory/fps3/fps.php?ID='
     filters = []
     #Each filter is downloaded into a temporary file via curl.
     #   The temporary file is deleted after all the filters are downloaded.
-    for t in tin:
-        print("Downloading filter " + t['filtername'])
-        _ = subprocess.call(['curl', '-o', 'temp.vot', url + t['filtername']])
-        with open('temp.vot') as f:
-            content = f.readlines()
+    for f in filterNames:
+    #for t in tin:
+        print("Downloading filter " + f)
+        _ = subprocess.call(['curl', '-o', 'temp.vot', url + f])
+        with open('temp.vot') as g:
+            content = g.readlines()
         if any("DetectorType" in c for c in content):
             det_type = 'photon'
         else:
             det_type = 'energy'
         temp = Table.read('temp.vot', format = 'votable')
         g = pyp.Filter(np.array(temp['Wavelength']), np.array(temp['Transmission']), \
-                       name = t['filtername'].replace('/','_'), unit = temp['Wavelength'].unit.name, \
+                       name = f.replace('/','_'), unit = temp['Wavelength'].unit.name, \
                        dtype = det_type)
         filters.append(g)
     _ = subprocess.call(['rm', 'temp.vot'])

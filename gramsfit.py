@@ -134,12 +134,12 @@ def par_summary(plt, data, grid, fit, n_models = 100):
         the number of models in that grid.
     chemtype: 1-element array ('o' or 'c') corresponding to given source.
     ogrid, cgrid: the full grid of models for both chemical types."""
-    plt.figure(figsize = (12, 3))
+    #plt.figure(figsize = (12, 3))
     def draw_plot(plt, data, edge_color, fill_color, data_labels = None):
         bp = plt.boxplot(data, labels = data_labels, patch_artist=True, \
                          meanline = True, showmeans = True)
-        for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
-            plt.setp(bp[element], color=edge_color)
+        #for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
+        #    plt.setp(bp[element], color=edge_color)
         for patch in bp['boxes']:
             patch.set(facecolor=fill_color)
         return bp
@@ -158,9 +158,12 @@ def par_summary(plt, data, grid, fit, n_models = 100):
                     r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
                     r"$\bm{\log{(T_\textbf{\textrm{in}}/10^3 \textbf{\textrm{K}})}}$", r"$\bm{\log{s}}$"]
         bp = draw_plot(plt, d, 'blue', 'None', data_labels = d_labels)
-    plt.xticks(fontsize = 8)
-    plt.title("gramsfit parameter summary ({} best-fit models) for source {} (chemtype = {})".\
-              format(n_models, data['ID'], fit['chemtype']), fontsize = 12)
+    #plt.xticks(fontsize = 8)
+    for tick in plt.xaxis.get_major_ticks():
+        tick.label.set_fontsize(8)
+    #plt.set_title("gramsfit parameter summary ({} best-fit models) for source {} (chemtype = {})".\
+    #          format(n_models, data['ID'], fit['chemtype']), fontsize = 12)
+    plt.set_title("Parameter summary ({} best-fit models)".format(n_models))
 
 def get_pars(grid, chisq, modelindex, scale, flag, n_accept = 100):
     """Given the chi-square and indices into the model grid, return the 
@@ -215,15 +218,27 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
     if isinstance(data, str):
-        d = Table.read(data, format = 'fits')
+        if 'vot' in data:
+            form = 'vot'
+        else:
+            form = 'fits'
+        d = Table.read(data, format = form)
         data = d.copy()
         d = 0.
     if isinstance(ogrid, str):
-        d = Table.read(ogrid, format = 'fits')
+        if 'vot' in data:
+            form = 'vot'
+        else:
+            form = 'fits'
+        d = Table.read(ogrid, format = form)
         ogrid = d.copy()
         d = 0.
     if isinstance(cgrid, str):
-        d = Table.read(cgrid, format = 'fits')
+        if 'vot' in data:
+            form = 'vot'
+        else:
+            form = 'fits'
+        d = Table.read(cgrid, format = form)
         cgrid = d.copy()
         d = 0.
     #
