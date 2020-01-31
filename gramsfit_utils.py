@@ -1,7 +1,8 @@
+import wget
 from astropy.table import Table
 from astropy.io import fits
 import numpy as np
-import subprocess
+import os, subprocess
 import pyphot as pyp
 import h5py
 from matplotlib import pyplot as plt
@@ -84,6 +85,9 @@ def editgridheader(header, grid, filters):
     comments_orig = [v for v in header.comments]
     h = fits.Header()
     loc = [i for i, h in enumerate(header) if '----' in h]
+    #loc = [i for i, h in enumerate(header) if 'DESC' in h]
+    #loc2 = [i for i, h in enumerate(header) if 'TTYPE1' in h]
+    #loc = [loc[0], loc2[0] - 2]
     for i in range(loc[0]):
         h.append((keys_orig[i], values_orig[i], comments_orig[i]), end = True)
         #h[keys_orig[i]] = values_orig[i]
@@ -149,9 +153,17 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
     filterLibrary = pyp.get_library(fname = libraryFile)
     filterNames = [f['filterName'].replace('/','_') for f in filters_used]
     chemtype = ['o', 'c']
+    #Links to the grid files on Google Drive. Is there a more elegant solution?
+    file_link = {'o': 'https://ndownloader.figshare.com/files/9684331', \
+                 'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in chemtype:
-        #TBD: read in the grid files from remote location.
-        grid, header = fits.getdata('/Users/sundar/work/SAGE/1506/SMCSEDfit/grams_' + c + '.fits', 1, header = True)
+        print("Downloading the GRAMS " + c.upper() + "-rich grid...")
+        gridfile = 'grams_' + c + '.fits'
+        if os.path.isfile(gridfile):
+            subprocess.call(['rm', gridfile])
+        f = wget.download(file_link[c], out = gridfile)
+        print("...done.")
+        grid, header = fits.getdata(gridfile, 1, header = True)
         #The original FITS_rec object is turned into an astropy Table for manipulation.
         #   It is then turned into a HDU object for output.
         grid = Table(grid) #conversion step 1
@@ -168,4 +180,4 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         grid['mphot'] = -100**(1/5.0) * np.log10(grid['Fphot'] / np.repeat(zp[np.newaxis, :], len(grid), axis = 0))
         g = fits.table_to_hdu(grid) #conversion step 2
         g.header = editgridheader(header, grid, filters_used)
-        g.writeto('grams_' + c + '.fits', overwrite = True)
+        g.writeto(gridfile, overwrite = True)
