@@ -1,7 +1,7 @@
 # gramsfit
 Code to fit GRAMS models to AGB/RSG candidates
 
-Requires numpy, scipy, astropy, and h5py installed. It also uses the pyphot fork available from https://github.com/sundarjhu/pyphot.
+Requires the numpy, scipy, astropy, wget, and h5py packages. It also uses the pyphot fork available from https://github.com/sundarjhu/pyphot.
 
 Given a FITS file containing the source photometry and some related information (an array of flags specifying whether a particular band is to be fit for a particular source, another array of flags that records non-detections, and an array with the distance in kpc to each source), and the O-rich and C-rich model grid, find the best-fit GRAMS models for each source.
 
