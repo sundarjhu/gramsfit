@@ -1,36 +1,33 @@
 from astropy.table import Table
-#from astropy.io import fits
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize
 from gramsfit_utils import *
 
-def chisq2d(s, data, fmod):
-    """return chisq for one source and an entire model grid and 
-    a vector of scale factors, one for each model"""
-    nmodels = fmod.shape[0]
-    nbands = len(np.where(data['FITFLAG'])[0])
-    #model and data fluxes must have the same shape.
-    #   also, the data fluxes are restricted using FITFLAG
-    fm = fmod[:, data['BANDMAP'][data['FITFLAG']]]
-    f = np.repeat(data['FLUX'][data['FITFLAG']][np.newaxis, :], nmodels, axis = 0)
-    df = np.repeat(data['DFLUX'][data['FITFLAG']][np.newaxis, :], nmodels, axis = 0)
-    #is the scale factor a scalar or a vector?
-    if hasattr(s, '__len__'):
-        ss = np.repeat(s[:, np.newaxis], nbands, axis = 1)
-    else:
-        ss = np.tile(s, (nmodels, nbands))
-    #
-    #The following chisq has two terms -- the first one for detections,
-    #   the second for non-detections.
-    #Two differences between the following and Sawicki et al. 2012, especially Eq. A10.
-    #   1) He omitted one sigma_j in the proportionality in Eq. A6, which cancels
-    #       when the substitution is made for the error function.
-    #   2) I've used norm.cdf instead of the error function.
-    residue = (f - ss * fm) / df
-    chisq = np.nansum(residue[:, data['DETFLAG'][data['FITFLAG']]]**2, axis = 1) - 2 * \
-        np.nansum(np.log(norm.cdf(residue[:, ~data['DETFLAG'][data['FITFLAG']]])), axis = 1)
-    return chisq
+def chisq2d(scale, data, fmod):
+    """Compute and return the chi-squared for an entire model grid,
+    given the scale factors for each SED in the `data` table.
+    """
+    ndata, nmodels = scale.shape
+    nbands = len(data[0]['FLUX'])
+    chisqr = np.tile(np.nan, (ndata, nmodels))
+    for i in range(ndata):
+        detbands = np.where((data[i]['DETFLAG'])[data[i]['FITFLAG']])[0]
+        ndetbands = np.where((~data[i]['DETFLAG'])[data[i]['FITFLAG']])[0]
+        f = np.tile((data[i]['FLUX'])[:, np.newaxis], nmodels)
+        df = np.tile((data[i]['DFLUX'])[:, np.newaxis], nmodels)
+        sc = np.tile(scale[i, :][:, np.newaxis], nbands).transpose()
+        residue = (f - sc * fmod[:, data[i]['BANDMAP']].transpose()) / df
+        #The following chisq has two terms -- the first one for detections,
+        #   the second for non-detections.
+        #Two differences between the following and Sawicki et al. 2012, especially Eq. A10.
+        #   1) He omitted one sigma_j in the proportionality in Eq. A6, which cancels
+        #       when the substitution is made for the error function.
+        #   2) I've used norm.cdf instead of the error function.
+        chisqr[i, :] = np.nansum(residue[detbands]**2, axis = 0)
+        if len(ndetbands) > 0:
+            chisqr[i, :] = chisqr[i, :] - 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])), axis = 0)
+    return chisqr
 
 def chisq1d(s, data, fmod):
     """return chisq for one source and one model and one scale factor"""
@@ -52,65 +49,56 @@ def chisq1d(s, data, fmod):
 
 def get_scale(data, fmod):
     n_models = fmod.shape[0]
-    f = np.repeat(data['FLUX'][data['FITFLAG']][np.newaxis, :], n_models, axis = 0)
-    df = np.repeat(data['DFLUX'][data['FITFLAG']][np.newaxis, :], n_models, axis = 0)
-    fm = fmod[:, data['BANDMAP'][data['FITFLAG']]]
-
-    #First, obtain the scale factor ignoring any non-detections.
-    scale_det = np.nansum(f[:, data['DETFLAG'][data['FITFLAG']]] * \
-                      fm[:, data['DETFLAG'][data['FITFLAG']]] / \
-                      df[:, data['DETFLAG'][data['FITFLAG']]]**2, axis = 1) / \
-        np.nansum(fm[:, data['DETFLAG'][data['FITFLAG']]]**2 / \
-                  df[:, data['DETFLAG'][data['FITFLAG']]]**2, axis = 1)
+    ndata, nbands = data['FLUX'].shape
+    #First, obtain the scale factor ignoring any non-detection
+    scale_det = np.tile(np.nan, (ndata, n_models))
+    for i in range(n_models):
+        bands = (data[i]['DETFLAG'])[data[i]['FITFLAG']]
+        f = np.tile(data[i]['FLUX'][bands][:, np.newaxis], n_models)
+        df = np.tile(data[i]['DFLUX'][bands][:, np.newaxis], n_models)
+        scale_det[i, :] = np.nansum(f * fmod[:, bands] / df**2, axis = 1) / np.nansum(fmod[:, bands]**2 / df**2, axis = 1)
     scale_nondet = scale_det.copy()
-
     #Only required if there are non-detections in the data.
-    if (~data['DETFLAG'][data['FITFLAG']]).sum() != 0:
-        for i in range(n_models):
-            p = minimize(chisq1d, np.array([scale_det[i]]), args = (data, fmod[i, :]), \
-                         method = 'Nelder-Mead', options = {'maxiter': 10000})
-            if p['status'] == 0:
-                scale_nondet[i] = p['x'][0]
-            else:
-                print("Search for scale_nondet did not converge for object " + \
-                      "{}.".format(data['ID']))
-
+    k = np.nonzero([not(data[j]['DETFLAG'][data[j]['FITFLAG']].any()) for j in range(ndata)])[0]
+    if len(k) > 0:
+        for i in range(len(k)):
+            for j in range(n_models):
+                p = minimize(chisq1d, np.array([scale_det[i, j]]), args = (data[i, :], fmod[j, :]), \
+                             method = 'Nelder-Mead', options = {'maxiter': 10000})
+                if p['status'] == 0:
+                    scale_nondet[i, j] = p['x'][0]
+                else:
+                    print("Search for scale_nondet did not converge for object " + \
+                          "{}.".format(data['ID']))
     return scale_nondet
 
 def get_chisq(data, ofmod, cfmod, scale = False):
     """Given the observed photometry and the model grid synthetic photometry,
     compute and output the chisq with and without the scale as a free parameter."""
     ndata = len(data)
-    scale_o = np.tile(1.0, (ndata, ofmod.shape[0]))
-    scale_c = np.tile(1.0, (ndata, cfmod.shape[0]))
-    chisq_o = np.tile(np.nan, (ndata, ofmod.shape[0]))
-    chisq_c = np.tile(np.nan, (ndata, cfmod.shape[0]))
     #Number of free parameters increased by one if scale is provided.
-    p = 0
+    pp = 0
+    #number of bands with FITFLAG == True that have finite fluxes
+    nfinite = np.array([len(np.nonzero(~np.isnan(x['FLUX'][x['FITFLAG']]))[0]) for x in data])
     if scale:
-        for i in range(ndata):
-            #number of bands that have finite fluxes AND have FITFLAG = True
-            nfinite = len(np.where(~np.isnan(data[i]['FLUX'][data[i]['FITFLAG']]))[0])
-            scale_o[i, :] = get_scale(data[i], ofmod)
-            scale_c[i, :] = get_scale(data[i], cfmod)
-            p = 1
-            chisq_o[i, :] = chisq2d(scale_o[i, :], data[i], ofmod)/(nfinite - p)
-            chisq_c[i, :] = chisq2d(scale_c[i, :], data[i], cfmod)/(nfinite - p)
+        s_o = get_scale(data, ofmod)
+        s_c = get_scale(data, cfmod)
+        c_o = chisq2d(s_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
+        c_c = chisq2d(s_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
     else:
-        for i in range(ndata):
-            #number of bands that have finite fluxes AND have FITFLAG = True
-            nfinite = len(np.where(~np.isnan(data[i]['FLUX'][data[i]['FITFLAG']]))[0])
-            chisq_o[i, :] = chisq2d(scale_o[i, :], data[i], ofmod)/(nfinite - p)
-            chisq_c[i, :] = chisq2d(scale_c[i, :], data[i], cfmod)/(nfinite - p)
+        s_o = np.tile(1.0, (ndata, len(ofmod)))
+        s_c = np.tile(1.0, (ndata, len(cfmod)))
+        c_o = chisq2d(s_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
+        c_c = chisq2d(s_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
     #for each source, sort according to increase chisq. This sorted index into the model grid
     #   is stored in the modelindex arrays for each grid, and is output along with the sorted
     #   chisq values.
-    modelindex_o = np.argsort(chisq_o, axis = 1)
-    modelindex_c = np.argsort(chisq_c, axis = 1)
-    chio = np.array([chisq_o[i, modelindex_o[i, :]] for i in range(ndata)])
-    chisq_o = chio
-    chic = np.array([chisq_c[i, modelindex_c[i, :]] for i in range(ndata)])
-    chisq_c = chic
+    modelindex_o = np.argsort(c_o, axis = 1)
+    modelindex_c = np.argsort(c_c, axis = 1)
+    chisq_o = np.array([c_o[i, modelindex_o[i, :]] for i in range(ndata)])
+    chisq_c = np.array([c_c[i, modelindex_c[i, :]] for i in range(ndata)])
+    scale_o = np.array([s_o[i, modelindex_o[i, :]] for i in range(ndata)])
+    scale_c = np.array([s_c[i, modelindex_c[i, :]] for i in range(ndata)])
     return chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c
 
 def get_chemtype(chisq_o, chisq_c, CFIT_TOL = 1.0):
@@ -214,7 +202,7 @@ def get_pars(grid, chisq, modelindex, scale, flag, n_accept = 100):
     return p, p_err
 
 def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
-             force_chemtype = None):
+             force_chemtype = None, n_accept = 100):
     #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
     if isinstance(data, str):
@@ -264,13 +252,17 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     data['FLUX'] *= distscale
     data['DFLUX'] *= distscale
 
+    print("gramsfit: computing chi-squares...")
     if scale:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
             get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], scale = True)
     else:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
-            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'])
+            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], scale = scale)
+    print("gramsfit: done computing chi-squares.")
+    print("gramsfit: determining chemical types...")
     chemtype = get_chemtype(chisq_o, chisq_c)
+    print("gramsfit: done computing chemical types.")
     #recover original data
     data['FLUX'] /= distscale
     data['DFLUX'] /= distscale
@@ -287,11 +279,15 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
                    (scale_c[i, :] * cgrid[modelindex_c[i, :]]['Lum'] <= cgrid['Lum'].max()) \
                    for i in range(len(data))])
     #Best-fit parameter values
-    po, po_err = get_pars(ogrid, chisq_o, modelindex_o, scale_o, flag_o, n_accept = 100)
-    pc, pc_err = get_pars(cgrid, chisq_c, modelindex_c, scale_c, flag_c, n_accept = 100)
+    print("gramsfit: computing best-fit parameter values...")
+    po, po_err = get_pars(ogrid, chisq_o, modelindex_o, scale_o, flag_o, n_accept = n_accept)
+    pc, pc_err = get_pars(cgrid, chisq_c, modelindex_c, scale_c, flag_c, n_accept = n_accept)
+    print("gramsfit: done computing best-fit parameter values.")
 
-    fit = Table([data['ID'], chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, \
-                 scale_o, scale_c, flag_o, flag_c, po, po_err, pc, pc_err], \
+    fit = Table([data['ID'], chemtype, chisq_o[:, :n_accept], chisq_c[:, :n_accept], \
+                 modelindex_o[:, :n_accept], modelindex_c[:, :n_accept], \
+                 scale_o[:, :n_accept], scale_c[:, :n_accept], flag_o[:, :n_accept], flag_c[:, :n_accept], \
+                 po, po_err, pc, pc_err], \
                 names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', \
                          'modelindex_c', 'scale_o', 'scale_c', 'flag_o', 'flag_c', \
                          'pars_o', 'pars_o_err', 'pars_c', 'pars_c_err'))
@@ -307,6 +303,4 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
             print("Forcing chemical types as specified by force_chemtype...")
             fit.chemtype = ct
 
-    #return chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c, \
-    #    flag_o, flag_c, po, po_err, pc, pc_err
     return fit
