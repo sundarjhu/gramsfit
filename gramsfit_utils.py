@@ -167,6 +167,7 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         #The original FITS_rec object is turned into an astropy Table for manipulation.
         #   It is then turned into a HDU object for output.
         grid = Table(grid) #conversion step 1
+        grid.rename_column('MLR', 'DPR') #Changing MLR column name to DPR
         inlam = grid[0]['Lspec']
         infnu = grid['Fspec']
         filters = filterLibrary.load_filters(filterNames, interp = True, lamb = inlam * pyp.unit['micron'])
