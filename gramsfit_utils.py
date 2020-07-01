@@ -1,4 +1,3 @@
-import wget
 from astropy.table import Table
 from astropy.io import fits
 import numpy as np
@@ -157,16 +156,14 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
     file_link = {'o': 'https://ndownloader.figshare.com/files/9684331', \
                  'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in chemtype:
-        print("Downloading the GRAMS " + c.upper() + "-rich grid...")
         gridfile = 'grams_' + c + '.fits'
         if os.path.isfile(gridfile):
             subprocess.call(['rm', gridfile])
-        f = wget.download(file_link[c], out = gridfile)
-        print("...done.")
-        grid, header = fits.getdata(gridfile, 1, header = True)
+        grid, header = fits.getdata(file_link[c], 1, header = True)
         #The original FITS_rec object is turned into an astropy Table for manipulation.
         #   It is then turned into a HDU object for output.
         grid = Table(grid) #conversion step 1
+        print("Renaming 'MLR' column to 'DPR'")
         grid.rename_column('MLR', 'DPR') #Changing MLR column name to DPR
         inlam = grid[0]['Lspec']
         infnu = grid['Fspec']
