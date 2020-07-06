@@ -52,10 +52,10 @@ def get_scale(data, fmod):
     ndata, nbands = data['FLUX'].shape
     #First, obtain the scale factor ignoring any non-detection
     scale_det = np.tile(np.nan, (ndata, n_models))
-    for i in range(n_models):
+    for i in range(ndata):
         bands = (data[i]['DETFLAG'])[data[i]['FITFLAG']]
-        f = np.tile(data[i]['FLUX'][bands][:, np.newaxis], n_models)
-        df = np.tile(data[i]['DFLUX'][bands][:, np.newaxis], n_models)
+        f = (np.tile(data[i]['FLUX'][bands][:, np.newaxis], n_models)).T
+        df = (np.tile(data[i]['DFLUX'][bands][:, np.newaxis], n_models)).T
         scale_det[i, :] = np.nansum(f * fmod[:, bands] / df**2, axis = 1) / np.nansum(fmod[:, bands]**2 / df**2, axis = 1)
     scale_nondet = scale_det.copy()
     #Only required if there are non-detections in the data.
@@ -160,7 +160,7 @@ def get_pars(fit, ogrid, cgrid, n_accept = 100):
     (by default, the 100 models with the lowest chisq for each source are considered).
     """
     def madm(par):
-        result = np.median(np.abs(par - np.median(par)))
+        result = np.nanmedian(np.abs(par - np.nanmedian(par)))
         if result == 0:
             return np.nan
         else:
@@ -180,32 +180,41 @@ def get_pars(fit, ogrid, cgrid, n_accept = 100):
     #po = Table(l, names = tuple(parnames), dtype=('f8', 'f8', 'f8', 'f8', 'f8', 'f8', 'f8', 'f8')); po_err = po.copy()
     l = 0
     #add a scale column
-    po['scale'] = nanarray; po_err['scale'] = nanarray
+    po['scale'] = np.repeat(nanarray[:, np.newaxis], n_accept, axis = 1); po_err['scale'] = nanarray
     #similar tables for C-rich chemistry
     pc = po.copy(); pc_err = po_err.copy()
     #add columns for optical depth at feature centre
     po['tau10'] = nanarray; po_err['tau10'] = nanarray
     pc['tau11_3'] = nanarray; pc_err['tau11_3'] = nanarray
     for i in range(ndata):
-        for name in parnames:
-            po[i][name] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0]
-            po_err[i][name] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0:n_accept])
-            pc[i][name] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0]
-            pc_err[i][name] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0:n_accept])
-        po[i]['tau10'] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0]
-        po_err[i]['tau10'] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0:n_accept])
-        pc[i]['tau11_3'] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0]
-        pc_err[i]['tau11_3'] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0:n_accept])
-        po[i]['scale'] = fit[i]['scale_o'][fit[i]['flag_o']][0]
-        po[i]['Lum'] *= po[i]['scale']
-        po_err[i]['Lum'] *= po[i]['scale']
-        po[i]['DPR'] *= np.sqrt(po[i]['scale'])
-        po_err[i]['DPR'] *= np.sqrt(po[i]['scale'])
-        pc[i]['scale'] = fit[i]['scale_o'][fit[i]['flag_o']][0]
-        pc[i]['Lum'] *= pc[i]['scale']
-        pc_err[i]['Lum'] *= pc[i]['scale']
-        pc[i]['DPR'] *= np.sqrt(pc[i]['scale'])
-        pc_err[i]['DPR'] *= np.sqrt(pc[i]['scale'])
+        #values changed only if at least one FLAG value is True
+        #account for the possibility that only some of the n_accept models have FLAG == True
+        n_acc = min([n_accept, np.sum(fit[i]['flag_o'])])
+        if any(fit[i]['flag_o']):
+            for name in parnames:
+                po[i][name] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0]
+                po_err[i][name] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0:n_acc])
+            po[i]['tau10'] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0]
+            po_err[i]['tau10'] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0:n_acc])
+            po[i]['scale'][0:n_acc] = fit[i]['scale_o'][fit[i]['flag_o']][0:n_acc]
+            po_err[i]['scale'] = madm(po[i]['scale'])
+            po[i]['Lum'] *= po[i]['scale'][0]
+            po_err[i]['Lum'] *= po[i]['scale'][0]
+            po[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
+            po_err[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
+        n_acc = min([n_accept, np.sum(fit[i]['flag_c'])])
+        if any(fit[i]['flag_c']):
+            for name in parnames:
+                pc[i][name] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0]
+                pc_err[i][name] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0:n_acc])
+            pc[i]['tau11_3'] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0]
+            pc_err[i]['tau11_3'] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0:n_acc])
+            pc[i]['scale'][0:n_acc] = fit[i]['scale_c'][fit[i]['flag_c']][0:n_acc]
+            pc_err[i]['scale'] = madm(pc[i]['scale'])
+            pc[i]['Lum'] *= pc[i]['scale'][0]
+            pc_err[i]['Lum'] *= pc[i]['scale'][0]
+            pc[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
+            pc_err[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
     return po, po_err, pc, pc_err
 
 def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
