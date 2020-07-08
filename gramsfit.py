@@ -2,7 +2,7 @@ from astropy.table import Table
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize
-from gramsfit_utils import *
+import multiprocessing as mp
 
 def chisq2d(scale, data, fmod):
     """Compute and return the chi-squared for an entire model grid,
@@ -53,10 +53,11 @@ def get_scale(data, fmod):
     #First, obtain the scale factor ignoring any non-detection
     scale_det = np.tile(np.nan, (ndata, n_models))
     for i in range(ndata):
-        bands = (data[i]['DETFLAG'])[data[i]['FITFLAG']]
+        bands = np.nonzero((data[i]['DETFLAG']) & (data[i]['FITFLAG']))[0]
         f = (np.tile(data[i]['FLUX'][bands][:, np.newaxis], n_models)).T
         df = (np.tile(data[i]['DFLUX'][bands][:, np.newaxis], n_models)).T
-        scale_det[i, :] = np.nansum(f * fmod[:, bands] / df**2, axis = 1) / np.nansum(fmod[:, bands]**2 / df**2, axis = 1)
+        with np.errstate(divide='ignore',invalid='ignore'):
+            scale_det[i, :] = np.nansum(f * fmod[:, bands] / df**2, axis = 1) / np.nansum(fmod[:, bands]**2 / df**2, axis = 1)
     scale_nondet = scale_det.copy()
     #Only required if there are non-detections in the data.
     k = np.nonzero([not(data[j]['DETFLAG'][data[j]['FITFLAG']].any()) for j in range(ndata)])[0]
@@ -72,7 +73,7 @@ def get_scale(data, fmod):
                           "{}.".format(data['ID']))
     return scale_nondet
 
-def get_chisq(data, ofmod, cfmod, scale = False):
+def get_chisq(data, ofmod, cfmod, n_accept = 100, scale = False):
     """Given the observed photometry and the model grid synthetic photometry,
     compute and output the chisq with and without the scale as a free parameter."""
     ndata = len(data)
@@ -93,36 +94,34 @@ def get_chisq(data, ofmod, cfmod, scale = False):
     #for each source, sort according to increase chisq. This sorted index into the model grid
     #   is stored in the modelindex arrays for each grid, and is output along with the sorted
     #   chisq values.
-    modelindex_o = np.argsort(c_o, axis = 1)
-    modelindex_c = np.argsort(c_c, axis = 1)
-    chisq_o = np.array([c_o[i, modelindex_o[i, :]] for i in range(ndata)])
-    chisq_c = np.array([c_c[i, modelindex_c[i, :]] for i in range(ndata)])
-    scale_o = np.array([s_o[i, modelindex_o[i, :]] for i in range(ndata)])
-    scale_c = np.array([s_c[i, modelindex_c[i, :]] for i in range(ndata)])
-    return chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c
+    #Only the first n_accept models are retained.
+    modelindex_o = np.argsort(c_o, axis = 1)[:, :n_accept]
+    modelindex_c = np.argsort(c_c, axis = 1)[:, :n_accept]
+    c_o = np.array([c_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
+    c_c = np.array([c_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
+    s_o = np.array([s_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
+    s_c = np.array([s_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
+    return c_o, c_c, modelindex_o, modelindex_c, s_o, s_c
 
-def get_chemtype(chisq_o, chisq_c, CFIT_TOL = 1.0):
-    """Given arrays chisq_o and chisq_c of shape (Ndata x Nmodels), return the chemical type."""
-    """CFIT_TOL is the tolerance defined such that the C-rich chisq has to be lower than
+def get_chemtype(chisq_o_min, chisq_c_min, CFIT_TOL = 1.0):
+    """Given the minimum chisq values for each chemical type for each source, return
+    the chemical type.
+    CFIT_TOL is the tolerance defined such that the C-rich chisq has to be lower than
     the O-rich chisq divided by CFIT_TOL."""
-    chems = np.array(['o', 'c'])
-    ndata = chisq_o.shape[0]
-    chemtype = np.array([chems[(chisq_c[i, 0] <= \
-                                chisq_o[i, 0]/CFIT_TOL)*1] for i in range(ndata)])
-    return chemtype
+    chem = np.array(['o', 'c'])
+    return chem[(chisq_c_min <= chisq_o_min / CFIT_TOL) * 1]
 
 def par_summary(plt, data, grid, fit, n_models = 100):
     """Boxplot summaries for the best-fit models of both chemistries to a single source.
     For each chemistry, the n_models models with the lowest chisq values are selected.
-    For this to be true, the modelindex, scale, and flag arrays must already be sorted 
+    For this to be true, the modelindex and scale arrays must already be sorted 
     in ascending order of chisq.
     plt: plot object instantiated before being passed into this module.
     data: 1-row astropy table. 
-    modelindex_, scale_, flag_: 1 x ngrid numpy arrays where ngrid is 
+    modelindex_, scale_: 1 x ngrid numpy arrays where ngrid is 
         the number of models in that grid.
     chemtype: 1-element array ('o' or 'c') corresponding to given source.
     ogrid, cgrid: the full grid of models for both chemical types."""
-    #plt.figure(figsize = (12, 3))
     def draw_plot(plt, data, edge_color, fill_color, data_labels = None):
         bp = plt.boxplot(data, labels = data_labels, patch_artist=True, \
                          meanline = True, showmeans = True)
@@ -130,22 +129,25 @@ def par_summary(plt, data, grid, fit, n_models = 100):
         #    plt.setp(bp[element], color=edge_color)
         for patch in bp['boxes']:
             patch.set(facecolor=fill_color)
+        yt = plt.get_yticks(); plt.set_yticks(np.linspace(yt[0], yt[-1], 8))
         return bp
     lamref = {'o': '10', 'c': '11.3'}
     #One boxplot for each chemical type
+    color = {'o': 'blue', 'c': 'red'}
     for t in ['o', 'c']:
         g = grid[t][fit['modelindex_' + t]][0:n_models]
-        d = [np.log10(fit['scale_' + t][0:n_models] * g['Lum'] / 1e3), np.log10(g['Teff'] / 1e3), np.log10(g['Rin']), \
+        d = [fit['scale_' + t][0:n_models] * g['Lum'] / 1e3, g['Teff'] / 1e3, np.log10(g['Rin']), \
              -np.log10(g['tau1']), -np.log10(g['tau' + lamref[t].replace('.', '_')]), \
-             np.log10(np.sqrt(fit['scale_' + t][fit['flag_' + t]][0:n_models]) * g['DPR'] / 1e-13), \
-             np.log10(g['Tin'] / 1e3), np.log10(fit['scale_' + t][fit['flag_' + t]][0:n_models])]
-        d_labels = [r"$\bm{\log{(L/10^3} \textbf{\textrm{L}}_\bm{\odot})}$", \
-                    r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
+             np.log10(np.sqrt(fit['scale_' + t][0:n_models]) * g['DPR'] / 1e-13), \
+             g['Tin'] / 1e3, np.log10(fit['scale_' + t][0:n_models])]
+        d_labels = [r"$\bm{L/10^3 \textbf{\textrm{L}}}_\odot$", \
+                    r"$\bm{T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}}}$", \
+                    #r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
                     r"$\bm{\log{(R_\textbf{\textrm{in}}/R_\textbf{\textrm{star}})}}$", \
                     r"$\bm{-\log{\tau_1}}$", r"$\bm{-\log{\tau_{" + lamref[t] + "}}}$", \
                     r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
-                    r"$\bm{\log{(T_\textbf{\textrm{in}}/10^3 \textbf{\textrm{K}})}}$", r"$\bm{\log{s}}$"]
-        bp = draw_plot(plt, d, 'blue', 'None', data_labels = d_labels)
+                    r"$\bm{T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}}}$", r"$\bm{\log{s}}$"]
+        bp = draw_plot(plt, d, color[t], 'None', data_labels = d_labels)
     #plt.xticks(fontsize = 8)
     for tick in plt.xaxis.get_major_ticks():
         tick.label.set_fontsize(8)
@@ -153,11 +155,12 @@ def par_summary(plt, data, grid, fit, n_models = 100):
     #          format(n_models, data['ID'], fit['chemtype']), fontsize = 12)
     plt.set_title("Parameter summary ({} best-fit models)".format(n_models))
 
-def get_pars(fit, ogrid, cgrid, n_accept = 100):
+def get_pars(fit, ogrid, cgrid):
     """Given the fit table and the model grids, return the best-fit parameter values and estimates of their
     uncertainties.
-    n_accept is the number of models to consider when computing parameter uncertainties 
-    (by default, the 100 models with the lowest chisq for each source are considered).
+    The fit table has one row per source, and n_accept models per chemical type per source. This filtering
+    is already done in get_chisq.
+    All n_accept models are used to compute the MADM.
     """
     def madm(par):
         result = np.nanmedian(np.abs(par - np.nanmedian(par)))
@@ -167,8 +170,6 @@ def get_pars(fit, ogrid, cgrid, n_accept = 100):
             return result
     #
     ndata, nmodels = fit['chisq_o'].shape
-    if (nmodels != len(ogrid)) & (nmodels != n_accept):
-        raise ValueError("get_pars: len(chisq) must either be len(grid) or = n_accept!")
 
     parnames = np.array(['Lum', 'Teff', 'logg', 'Rin', 'tau1', 'DPR', 'Tin']) #common columns between chemical types
     npars = len(parnames)
@@ -180,41 +181,35 @@ def get_pars(fit, ogrid, cgrid, n_accept = 100):
     #po = Table(l, names = tuple(parnames), dtype=('f8', 'f8', 'f8', 'f8', 'f8', 'f8', 'f8', 'f8')); po_err = po.copy()
     l = 0
     #add a scale column
-    po['scale'] = np.repeat(nanarray[:, np.newaxis], n_accept, axis = 1); po_err['scale'] = nanarray
+    po['scale'] = np.repeat(nanarray[:, np.newaxis], nmodels, axis = 1); po_err['scale'] = nanarray
     #similar tables for C-rich chemistry
     pc = po.copy(); pc_err = po_err.copy()
     #add columns for optical depth at feature centre
     po['tau10'] = nanarray; po_err['tau10'] = nanarray
     pc['tau11_3'] = nanarray; pc_err['tau11_3'] = nanarray
     for i in range(ndata):
-        #values changed only if at least one FLAG value is True
-        #account for the possibility that only some of the n_accept models have FLAG == True
-        n_acc = min([n_accept, np.sum(fit[i]['flag_o'])])
-        if any(fit[i]['flag_o']):
-            for name in parnames:
-                po[i][name] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0]
-                po_err[i][name] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]][name][0:n_acc])
-            po[i]['tau10'] = ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0]
-            po_err[i]['tau10'] = madm(ogrid[fit[i]['modelindex_o'][fit[i]['flag_o']]]['tau10'][0:n_acc])
-            po[i]['scale'][0:n_acc] = fit[i]['scale_o'][fit[i]['flag_o']][0:n_acc]
-            po_err[i]['scale'] = madm(po[i]['scale'])
-            po[i]['Lum'] *= po[i]['scale'][0]
-            po_err[i]['Lum'] *= po[i]['scale'][0]
-            po[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
-            po_err[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
-        n_acc = min([n_accept, np.sum(fit[i]['flag_c'])])
-        if any(fit[i]['flag_c']):
-            for name in parnames:
-                pc[i][name] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0]
-                pc_err[i][name] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]][name][0:n_acc])
-            pc[i]['tau11_3'] = cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0]
-            pc_err[i]['tau11_3'] = madm(cgrid[fit[i]['modelindex_c'][fit[i]['flag_c']]]['tau11_3'][0:n_acc])
-            pc[i]['scale'][0:n_acc] = fit[i]['scale_c'][fit[i]['flag_c']][0:n_acc]
-            pc_err[i]['scale'] = madm(pc[i]['scale'])
-            pc[i]['Lum'] *= pc[i]['scale'][0]
-            pc_err[i]['Lum'] *= pc[i]['scale'][0]
-            pc[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
-            pc_err[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
+        for name in parnames:
+            po[i][name] = ogrid[fit[i]['modelindex_o']][name][0]
+            po_err[i][name] = madm(ogrid[fit[i]['modelindex_o']][name])
+        po[i]['tau10'] = ogrid[fit[i]['modelindex_o']]['tau10'][0]
+        po_err[i]['tau10'] = madm(ogrid[fit[i]['modelindex_o']]['tau10'])
+        po[i]['scale'] = fit[i]['scale_o']
+        po_err[i]['scale'] = madm(po[i]['scale'])
+        po[i]['Lum'] *= po[i]['scale'][0]
+        po_err[i]['Lum'] *= po[i]['scale'][0]
+        po[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
+        po_err[i]['DPR'] *= np.sqrt(po[i]['scale'][0])
+        for name in parnames:
+            pc[i][name] = cgrid[fit[i]['modelindex_c']][name][0]
+            pc_err[i][name] = madm(cgrid[fit[i]['modelindex_c']][name])
+        pc[i]['tau11_3'] = cgrid[fit[i]['modelindex_c']]['tau11_3'][0]
+        pc_err[i]['tau11_3'] = madm(cgrid[fit[i]['modelindex_c']]['tau11_3'])
+        pc[i]['scale'] = fit[i]['scale_c']
+        pc_err[i]['scale'] = madm(pc[i]['scale'])
+        pc[i]['Lum'] *= pc[i]['scale'][0]
+        pc_err[i]['Lum'] *= pc[i]['scale'][0]
+        pc[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
+        pc_err[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
     return po, po_err, pc, pc_err
 
 def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
@@ -259,11 +254,9 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
                 chi-squared values for each chemical type.
         scale_o, scale_c - n_accept-element arrays containing best-fit luminosity scale factors for each of the n_accept models
                 with the lowest chi-squared values for each chemical type.
-        flag_o, flag_c - n_accept-element Boolean arrays, TRUE if the associated scale factor results in a physically realistic
-                luminosity for the source.
-        If compute_pars is set, best-fit values and uncertainties (from the n_accept models with lowest chi-squared values) are
+        If compute_pars is True, best-fit values and uncertainties (from the n_accept models with lowest chi-squared values) are
                 computed for the following parameters for each chemical type:
-                Lum, Teff, logg, Rin, tau1, DPR, Tin, scale, tau10 (O-rich), and tau11_3 (C-rich).
+                Lum, Teff, logg, Rin, tau1, DPR, Tin, scale, and tau10 (O-rich) or tau11_3 (C-rich).
     """
     #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
@@ -317,10 +310,10 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     print("gramsfit: computing chi-squares...")
     if scale:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
-            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], scale = True)
+            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = True)
     else:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
-            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], scale = scale)
+            get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = scale)
     print("gramsfit: done computing chi-squares.")
     print("gramsfit: determining chemical types...")
     chemtype = get_chemtype(chisq_o, chisq_c)
@@ -328,23 +321,8 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     #recover original data
     data['FLUX'] /= distscale
     data['DFLUX'] /= distscale
-    #
-    #restrict the values of scale such that the scaled luminosities lie within the luminosity range
-    #   of each grid
-    #This could be changed for the high-luminosity range to treat high-L sources.
-    #This should really be done at the optimisation stage by placing constraints on the scale,
-    #   but for now...
-    flag_o = np.array([(scale_o[i, :] * ogrid[modelindex_o[i, :]]['Lum'] >= ogrid['Lum'].min()) & \
-                   (scale_o[i, :] * ogrid[modelindex_o[i, :]]['Lum'] <= ogrid['Lum'].max()) \
-                   for i in range(len(data))])
-    flag_c = np.array([(scale_c[i, :] * cgrid[modelindex_c[i, :]]['Lum'] >= cgrid['Lum'].min()) & \
-                   (scale_c[i, :] * cgrid[modelindex_c[i, :]]['Lum'] <= cgrid['Lum'].max()) \
-                   for i in range(len(data))])
-    fit = Table([data['ID'], chemtype, chisq_o[:, :n_accept], chisq_c[:, :n_accept], \
-                 modelindex_o[:, :n_accept], modelindex_c[:, :n_accept], \
-                 scale_o[:, :n_accept], scale_c[:, :n_accept], flag_o[:, :n_accept], flag_c[:, :n_accept]], \
-                 names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', 'modelindex_c', \
-                          'scale_o', 'scale_c', 'flag_o', 'flag_c'))
+    fit = Table([data['ID'], chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c], \
+                 names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', 'modelindex_c', 'scale_o', 'scale_c'))
 
     #Best-fit parameter values
     if compute_pars:
@@ -363,7 +341,7 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     if force_chemtype is not None:
         nforce = len(force_chemtype)
         if nforce == 1:
-            force_chemtype = np.repeat(force_chemtype, ndata)
+            force_chemtype = np.repeat(force_chemtype, ndata).copy()
         ct = np.array([f.strip().lower() for f in list(force_chemtype)])
         if ((ct == 'o') & (ct == 'c')).sum() < len(ct):
             raise ValueError("ERROR! Chemical type can only be either 'O' or 'C'!")
