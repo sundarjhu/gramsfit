@@ -155,7 +155,8 @@ def par_summary(plt, data, grid, fit, n_models = 100):
         #for element in ['boxes', 'whiskers', 'fliers', 'means', 'medians', 'caps']:
         #    plt.setp(bp[element], color=edge_color)
         for patch in bp['boxes']:
-            patch.set(facecolor=fill_color)
+            #patch.set(facecolor=fill_color)
+            patch.set(facecolor=edge_color)
         yt = plt.get_yticks(); plt.set_yticks(np.linspace(yt[0], yt[-1], 8))
         return bp
     lamref = {'o': '10', 'c': '11.3'}
@@ -171,7 +172,8 @@ def par_summary(plt, data, grid, fit, n_models = 100):
                     r"$\bm{T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}}}$", \
                     #r"$\bm{\log{(T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}})}}$", \
                     r"$\bm{\log{(R_\textbf{\textrm{in}}/R_\textbf{\textrm{star}})}}$", \
-                    r"$\bm{-\log{\tau_1}}$", r"$\bm{-\log{\tau_{" + lamref[t] + "}}}$", \
+                    #r"$\bm{-\log{\tau_1}}$", r"$\bm{-\log{\tau_{" + lamref[t] + "}}}$", \
+                    r"$\bm{-\log{\tau_1}}$", r"$\bm{-\log{\tau_{\rm ref}}}$", \
                     r"$\bm{\log{(\textbf{\textrm{DPR}}/10^{-13} \textbf{\textrm{M}}_\odot \textbf{\textrm{yr}}^{-1})}}$", \
                     r"$\bm{T_\textbf{\textrm{eff}}/10^3 \textbf{\textrm{K}}}$", r"$\bm{\log{s}}$"]
         bp = draw_plot(plt, d, color[t], 'None', data_labels = d_labels)
@@ -340,6 +342,11 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     #set chemical types
     chemtype = get_chemtype(chisq_o[:, 0], chisq_c[:, 0])
     #scale data fluxes back to data['DKPC'] values, create a table to store output
+    try:
+        modeldkpc = float(ogrid.meta['DISTKPC'])
+    except:
+        modeldkpc = 50.12
+    distscale = (np.repeat(data['DKPC'][:, np.newaxis], data['FLUX'].shape[1], axis = 1)/modeldkpc)**2
     data['FLUX'] /= distscale
     data['DFLUX'] /= distscale
     fit = Table([data['ID'], chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c], \
