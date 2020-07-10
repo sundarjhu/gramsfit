@@ -1,8 +1,10 @@
-from astropy.table import Table
+from astropy.table import Table, vstack
 import numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize
-import multiprocessing as mp
+#import multiprocessing as mp
+from multiprocessing import Pool, cpu_count
+import time
 
 def chisq2d(scale, data, fmod):
     """Compute and return the chi-squared for an entire model grid,
@@ -38,7 +40,7 @@ def chisq1d(s, data, fmod):
     #
     #The following chisq has two terms -- the first one for detections,
     #   the second for non-detections.
-    #Two differences between the following and Sawicki et al. 2012, especially Eq. A10.
+    #Two differences between the following and Sawicki et al. 2012 PASP 124, 1208, especially Eq. A10.
     #   1) He omitted one sigma_j in the proportionality in Eq. A6, which cancels
     #       when the substitution is made for the error function.
     #   2) I've used norm.cdf instead of the error function.
@@ -48,6 +50,16 @@ def chisq1d(s, data, fmod):
     return chisq
 
 def get_scale(data, fmod):
+    """Compute the scale factor such that the sum of (fdata - scale * fmod)**2 / (dfdata)**2 
+    over all valid bands is minimised. Can also be computed with non-detections in the data 
+    (Method from Sawicki et al. 2012 PASP 124, 1208).
+    Input: data - ndata-element astropy table with nbands bands of data per source. Must include
+                    a column FITFLAG that is True for each band to be included in the fit.
+           fmod - n_accept-by-nbands element array of fluxes for each model in the O- or C-rich GRAMS grid.
+                    n_accept is the number of models with the lowest chi-squares whose fits are deemed acceptable.
+                    This trimming is applied when computing the chi-squares in get_chisq.
+    Output: scale - ndata-by-n_accept array with computed scale values.
+    """
     n_models = fmod.shape[0]
     ndata, nbands = data['FLUX'].shape
     #First, obtain the scale factor ignoring any non-detection
@@ -75,39 +87,53 @@ def get_scale(data, fmod):
 
 def get_chisq(data, ofmod, cfmod, n_accept = 100, scale = False):
     """Given the observed photometry and the model grid synthetic photometry,
-    compute and output the chisq with and without the scale as a free parameter."""
+    compute and output the chisq with and without the scale as a free parameter.
+    Input: data - ndata-element astropy table with nbands bands of data per source. Must include
+                    a column FITFLAG that is True for each band to be included in the fit.
+           [o/c]fmod - nmodels-by-nbands array of fluxes for each model in the O- or C-rich GRAMS grid.
+           n_accept - the number of models with the lowest chi-squares whose fits are deemed acceptable.
+           scale - True or False depending on whether the scale is treated as a free parameter.
+    Output: chisq_o, chisq_c - ndata-by-n_accept array of chi-squares for the n_accept models of
+                    each chemical type with the lowest chi-squares.
+            modelindex_o, modelindex_c - ndata-by-n_accept arrays of indices into the GRAMS grid of the 
+                    n_accept models with the lowest chi-squares for each source.
+            scale_o, scale_c - ndata-by-n_accept arrays of scale factors corresponding to the models with
+                    the lowest chi-squares.
+    """
     ndata = len(data)
     #Number of free parameters increased by one if scale is provided.
     pp = 0
     #number of bands with FITFLAG == True that have finite fluxes
     nfinite = np.array([len(np.nonzero(~np.isnan(x['FLUX'][x['FITFLAG']]))[0]) for x in data])
-    if scale:
-        s_o = get_scale(data, ofmod)
-        s_c = get_scale(data, cfmod)
-        c_o = chisq2d(s_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
-        c_c = chisq2d(s_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
-    else:
-        s_o = np.tile(1.0, (ndata, len(ofmod)))
-        s_c = np.tile(1.0, (ndata, len(cfmod)))
-        c_o = chisq2d(s_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
-        c_c = chisq2d(s_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
+    with np.errstate(divide='ignore',invalid='ignore'):
+        if scale:
+            scale_o = get_scale(data, ofmod)
+            scale_c = get_scale(data, cfmod)
+            chisq_o = chisq2d(scale_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
+            chisq_c = chisq2d(scale_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
+        else:
+            scale_o = np.tile(1.0, (ndata, len(ofmod)))
+            scale_c = np.tile(1.0, (ndata, len(cfmod)))
+            chisq_o = chisq2d(scale_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
+            chisq_c = chisq2d(scale_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
     #for each source, sort according to increase chisq. This sorted index into the model grid
     #   is stored in the modelindex arrays for each grid, and is output along with the sorted
     #   chisq values.
     #Only the first n_accept models are retained.
-    modelindex_o = np.argsort(c_o, axis = 1)[:, :n_accept]
-    modelindex_c = np.argsort(c_c, axis = 1)[:, :n_accept]
-    c_o = np.array([c_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
-    c_c = np.array([c_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
-    s_o = np.array([s_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
-    s_c = np.array([s_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
-    return c_o, c_c, modelindex_o, modelindex_c, s_o, s_c
+    modelindex_o = np.argsort(chisq_o, axis = 1)[:, :n_accept]
+    modelindex_c = np.argsort(chisq_c, axis = 1)[:, :n_accept]
+    chisq_o = np.array([chisq_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
+    chisq_c = np.array([chisq_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
+    scale_o = np.array([scale_o[i, modelindex_o[i, :]] for i in range(ndata)]).copy()
+    scale_c = np.array([scale_c[i, modelindex_c[i, :]] for i in range(ndata)]).copy()
+    return chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c
 
 def get_chemtype(chisq_o_min, chisq_c_min, CFIT_TOL = 1.0):
     """Given the minimum chisq values for each chemical type for each source, return
     the chemical type.
     CFIT_TOL is the tolerance defined such that the C-rich chisq has to be lower than
-    the O-rich chisq divided by CFIT_TOL."""
+    the O-rich chisq divided by CFIT_TOL.
+    """
     chem = np.array(['o', 'c'])
     return chem[(chisq_c_min <= chisq_o_min / CFIT_TOL) * 1]
 
@@ -121,7 +147,8 @@ def par_summary(plt, data, grid, fit, n_models = 100):
     modelindex_, scale_: 1 x ngrid numpy arrays where ngrid is 
         the number of models in that grid.
     chemtype: 1-element array ('o' or 'c') corresponding to given source.
-    ogrid, cgrid: the full grid of models for both chemical types."""
+    ogrid, cgrid: the full grid of models for both chemical types.
+    """
     def draw_plot(plt, data, edge_color, fill_color, data_labels = None):
         bp = plt.boxplot(data, labels = data_labels, patch_artist=True, \
                          meanline = True, showmeans = True)
@@ -212,82 +239,23 @@ def get_pars(fit, ogrid, cgrid):
         pc_err[i]['DPR'] *= np.sqrt(pc[i]['scale'][0])
     return po, po_err, pc, pc_err
 
-def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
-             force_chemtype = None, n_accept = 100, compute_pars = True):
-    """
-    Compute chi-squared fits to observed SEDs of AGB/RSG candidates using the GRAMS O-rich and C-rich
-    model grids.
-    INPUT:
-    data - Astropy table containing the observed fluxes and uncertainties over a number of broadband filters.
-        The data table must contain the following columns:
-        ID - unique identifier for each SED.
-        FLUX/DFLUX - NBANDS-element arrays containing the observed fluxes and uncertainties in each of
-                    NBANDS broadband filters.
-        BANDMAP - NBANDS-element arrays of indices into the array of broadband filters
-        DETFLAG - NBANDS-element arrays of Booleans, TRUE if the flux in that band is a detection limit.
-                    In such a case, the value in DFLUX is taken to be the number of standard deviations
-                    above the noise level of this detection limit.
-        OPTIONAL COLUMNS:
-        FITFLAG - NBANDS-element arrays of Booleans, TRUE if that band is to be included in the fit.
-                    Can also be fed as an input keyword to the function call.
-        DKPC - distance in kpc to source. Can also be fed as input keyword to the function call.
-    ogrid, cgrid - Astropy tables containing synthetic photometry for the GRAMS grid over a number of broadband filters.
-        Photometry can be computed from the synthetic spectra for any broadband filters present in the SVO database:
-        http://svo2.cab.inta-csic.es/theory/fps/
-    OPTIONAL INPUT:
-    ID - array of unique identifiers passed to the function. Overrides column present in the data table.
-    FITFLAG - NBANDS-element arrays of Booleans, TRUE if the flux in that band is a detection limit. Overrides column
-            present in the data table.
-    DKPC - distance in kpc (scalar or array) passed to the function. Overrides column present in the data table.
-    scale - Boolean. If TRUE, a best-fit luminosity scale factor is also computed as part of the fit.
-            NOT IMPLEMENTED YET.
-    force_chemtype - scalar or array containing either 'o' or 'c', overrides the best-fit chemical type computed
-            from the chi-squared fit.
-    n_accept - scalar, number of models with lowest chi-squares used to compute the parameter uncertainties.
-    compute_pars - Boolean. If TRUE, best-fit parameter values and related uncertainties are computed using
-            the specified n_accept value.
-    OUTPUT:
-    fit - Astropy table containing the following columns for each input SED:
-        chisq_o, chisq_c - n_accept-element arrays with the lowest n_accept chi-squared values computed for each chemical type.
-        chemtype - chemical type assigned based on comparing the lowest chi-squared values of each chemical type.
-        modelindex_o, modelindex_c - n_accept-element arrays with indices into the model grids for the models with the lowest
-                chi-squared values for each chemical type.
-        scale_o, scale_c - n_accept-element arrays containing best-fit luminosity scale factors for each of the n_accept models
-                with the lowest chi-squared values for each chemical type.
-        If compute_pars is True, best-fit values and uncertainties (from the n_accept models with lowest chi-squared values) are
-                computed for the following parameters for each chemical type:
-                Lum, Teff, logg, Rin, tau1, DPR, Tin, scale, and tau10 (O-rich) or tau11_3 (C-rich).
-    """
+def prep_input(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None):
     #data, ogrid, and cgrid can either be a string pointing to the full path of the file,
     #   or an astropy table
-    if isinstance(data, str):
-        if 'vot' in data:
-            form = 'vot'
-        else:
-            form = 'fits'
-        d = Table.read(data, format = form)
-        data = d.copy()
-        d = 0.
-    if isinstance(ogrid, str):
-        if 'vot' in data:
-            form = 'vot'
-        else:
-            form = 'fits'
-        d = Table.read(ogrid, format = form)
-        ogrid = d.copy()
-        d = 0.
-    if isinstance(cgrid, str):
-        if 'vot' in data:
-            form = 'vot'
-        else:
-            form = 'fits'
-        d = Table.read(cgrid, format = form)
-        cgrid = d.copy()
-        d = 0.
-    #
+    for x, name in zip([data, ogrid, cgrid], ['data', 'ogrid', 'cgrid']):
+        if isinstance(x, str):
+            if 'vot' in x:
+                form = 'votable'
+            elif 'fits' in x:
+                form = 'fits'
+            else:
+                raise ValueError("Input file {} does not have .vot or .fits extension!".format(x))
+            exec(name + " = Table.read('" + x + "', format = '" + form + "')")
     ndata = len(data)
+    #If the ID column is absent from the data, generate unique IDs from indices.
     if 'ID' not in data.columns:
         data['ID'] = [str(i+1) for i in np.arange(len(data))]
+    #If FITFLAG and/or DKPC keywords are provided, override values in the data table.
     if FITFLAG is not None:
         if FITFLAG.ndim == 1:
             data['FITFLAG'] = np.repeat(FITFLAG[:, np.newaxis], ndata, axis = 1)
@@ -307,29 +275,78 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     data['FLUX'] *= distscale
     data['DFLUX'] *= distscale
 
-    print("gramsfit: computing chi-squares...")
+    return data, ogrid, cgrid
+
+def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale = False, \
+             force_chemtype = None, n_accept = 100, compute_pars = True):
+    """
+    Compute chi-squared fits to observed SEDs of AGB/RSG candidates using the GRAMS O-rich and C-rich
+    model grids.
+    INPUT:
+    data - Astropy table containing the observed fluxes and uncertainties over a number of broadband filters.
+        Each row of the data table must contain the following columns:
+        ID - unique identifier for each SED.
+        FLUX/DFLUX - NBANDS-element arrays containing the observed fluxes and uncertainties in each of
+                    NBANDS broadband filters.
+        BANDMAP - NBANDS-element arrays of indices into the array of broadband filters
+        DETFLAG - NBANDS-element arrays of Booleans, TRUE if the flux in that band is a detection limit.
+                    In such a case, the value in DFLUX is taken to be the number of standard deviations
+                    above the noise level of this detection limit.
+        OPTIONAL COLUMNS:
+        FITFLAG - NBANDS-element arrays of Booleans, TRUE if band is to be included in the fit.
+                    Can also be fed as an input keyword to the function call.
+        DKPC - distance in kpc to source. Can also be fed as input keyword to the function call.
+    ogrid, cgrid - Astropy tables containing synthetic photometry for the GRAMS grid over a number of 
+        broadband filters. Photometry can be computed from the synthetic spectra for any broadband filters 
+        present in the SVO database: http://svo2.cab.inta-csic.es/theory/fps/
+    OPTIONAL INPUT:
+    ID - array of unique identifiers passed to the function. Overrides column present in the data table.
+    FITFLAG - NBANDS-element arrays of Booleans, TRUE if the flux in that band is a detection limit. Overrides column
+            present in the data table.
+    DKPC - distance in kpc (scalar or array) passed to the function. Overrides column present in the data table.
+    scale - Boolean. If TRUE, a best-fit luminosity scale factor is also computed as part of the fit. The
+            effective distance to the source is then DKPC_eff = data['DKPC'] / np.sqrt(scale).
+            See the get_scale method for details.
+    force_chemtype - scalar or array containing either 'o' or 'c', overrides the best-fit chemical type computed
+            from the chi-squared fit.
+    n_accept - scalar, number of models with lowest chi-squares used to compute the parameter uncertainties.
+    compute_pars - Boolean. If TRUE, best-fit parameter values and related uncertainties are computed using
+            the specified n_accept value.
+    OUTPUT:
+    fit - Astropy table containing the following columns for each input SED:
+        chisq_o, chisq_c - n_accept-element arrays with the lowest n_accept chi-squared values computed for each 
+        chemical type.
+        chemtype - chemical type assigned based on comparing the lowest chi-squared values of each chemical type.
+        modelindex_o, modelindex_c - n_accept-element arrays with indices into the model grids for the models with 
+                the lowest chi-squared values for each chemical type.
+        scale_o, scale_c - n_accept-element arrays containing best-fit luminosity scale factors for each of the 
+                n_accept models with the lowest chi-squared values for each chemical type.
+        If compute_pars is True, best-fit values and uncertainties (from the n_accept models with lowest 
+                chi-squared values) are computed for the following parameters for each chemical type:
+                Lum, Teff, logg, Rin, tau1, DPR, Tin, scale, and tau10 (O-rich) or tau11_3 (C-rich).
+    """
+    #In case the user has input the table names instead of the tables, read in the tables.
+    #Also, scale the data fluxes to the distace at which the models are computed.
+    d = data.copy(); og = ogrid.copy(); cg = cgrid.copy()
+    data, ogrid, cgrid = prep_input(d, og, cg, ID = ID, FITFLAG = FITFLAG, DKPC = DKPC)
+    d = 0; og = 0; cg = 0
+    #computing chi-squares
     if scale:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
             get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = True)
     else:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
             get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = scale)
-    print("gramsfit: done computing chi-squares.")
-    print("gramsfit: determining chemical types...")
-    chemtype = get_chemtype(chisq_o, chisq_c)
-    print("gramsfit: done computing chemical types.")
-    #recover original data
+    #set chemical types
+    chemtype = get_chemtype(chisq_o[:, 0], chisq_c[:, 0])
+    #scale data fluxes back to data['DKPC'] values, create a table to store output
     data['FLUX'] /= distscale
     data['DFLUX'] /= distscale
     fit = Table([data['ID'], chemtype, chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c], \
                  names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', 'modelindex_c', 'scale_o', 'scale_c'))
-
-    #Best-fit parameter values
+    #Compute best-fit parameter values
     if compute_pars:
-        print("gramsfit: computing best-fit parameter values...")
-        po, po_err, pc, pc_err = get_pars(fit, ogrid, cgrid, n_accept = n_accept)
-        print("...done.")
-        print("gramsfit: appending best-fit parameter values to fit table...")
+        po, po_err, pc, pc_err = get_pars(fit, ogrid, cgrid)
         for c in po.columns:
             fit[c + '_o'] = po[c]
             fit[c + '_o_err'] = po_err[c]
@@ -337,7 +354,7 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
             fit[c + '_c'] = pc[c]
             fit[c + '_c_err'] = pc_err[c]
         print("...done.")
-
+    #Force chemical types
     if force_chemtype is not None:
         nforce = len(force_chemtype)
         if nforce == 1:
@@ -350,3 +367,64 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
             fit.chemtype = ct
 
     return fit
+
+def deploy_gramsfit(data, ogrid, cgrid, scale):
+    """Internal function only to be accessed via gramsfit_driver.
+    """
+    print("depoly_gramsfit: executing gramsfit for {} sources.".format(len(data)))
+    fit = gramsfit(data, ogrid, cgrid, scale = scale)
+    #Before saving to file, remove all columns related to the parameter values.
+    #TBD: save the parameters as part of the table but in a different format (inside of a table inside a table)
+    #       This has to be done within gramsfit.get_pars.
+    cols = [col for col in fit.columns if 'pars' in col]
+    if len(cols) != 0:
+        for col in cols:
+            del fit[col]
+    return fit
+
+def gramsfit_wrapper(data, ogrid, cgrid, scale = False, outfile = 'gramsfit.vot', parallel = False, n_cores = 3):
+    """Use for computationally intensive/large datasets. This method splits the data into chunks and also allows
+    parallel calls to the gramsfit method for these chunks.
+    The data is first split into chunks with <50,000 rows each, then each chunk is fed to gramsfit.
+    If parallel is set to True, each chunk is further split into n_cores pieces, followed by parallel calls to gramsfit for each piece.
+    The results are automatically combined and written into the output file.
+    Input: data, ogrid, cgrid - MUST be astropy tables.
+        scale - Boolean. If True, luminosity scaling is incorporated into the fits. See the get_scale method for details.
+        outfile - results are dumped into a VOTable with this name. Defaults to 'gramsfit.vot'
+        parallel - Boolean. If True, the data is further split across n_cores simultaneous calls to gramsfit.
+        n_cores - number of CPU cores over which parallel calls are to be executed.
+    """
+    ndata = len(data)
+    #Depending on the data size, decide whether the payload must be (1) split and (2) executed using multiprocess.
+    n_max_per_piece = 50000
+    if ndata <= n_max_per_piece:
+        datalist = [data]
+    else:
+        n_pieces = int(np.ceil(ndata / n_max_per_piece))
+        datalist = [data[i * n_max_per_piece: min([n_max_per_piece * (i + 1), ndata])] for i in range(n_pieces)]
+    fits = []
+    for i in range(len(datalist)):
+        if parallel & (cpu_count() >= n_cores):
+            n_max_per_core = int(np.ceil(len(datalist[i]) / n_cores))
+            values = [(datalist[i][j * n_max_per_core: min([n_max_per_core * (j + 1), len(datalist[i])])], \
+                       ogrid, cgrid, scale) for j in range(n_cores)]
+            start = time.perf_counter()
+            with Pool(processes = n_cores) as pool:
+                result = pool.starmap(deploy_gramsfit, tuple(values))
+            finish = time.perf_counter()
+            print("Parallel execution finished in {} second(s).".format(round(finish-start, 2)))
+        else:
+            print("Either parallelisation was not chosen, or the number of CPU cores < n_cores. Running in serial mode.")
+            result = deploy_gramsfit(datalist[i], ogrid, cgrid, scale = scale)
+        if len(result) > 1:
+            fit = vstack(result)
+        else:
+            fit = result[0]
+        fits.append(fit)
+    if len(datalist) == 1:
+        f = fits[0].copy()
+    else:
+        f = vstack(fits)
+    #Output
+    print("Output written to {}.".format(outfile))
+    f.write(outfile, format = 'votable', overwrite = True)
