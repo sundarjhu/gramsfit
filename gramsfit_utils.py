@@ -182,7 +182,7 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         g.header = editgridheader(header, grid, filters_used)
         g.writeto(gridfile, overwrite = True)
 
-def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', **kwargs):
+def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary = True, **kwargs):
     """
     Interactively inspect a set of fits to a given SED.
     `prompt` and `outfile` set up the interactive inspection session.
@@ -204,13 +204,34 @@ def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', **kwargs):
     plt = setPlotParams()
     plt.figure(figsize = (12, 12))
     color = {'o': 'blue', 'c': 'red'}
+    xlim = [.1, 100]
     for i in range(ndata):
-        fig, (a0, a1) = plt.subplots(2, 1, gridspec_kw = {'height_ratios': [3, 1]}, constrained_layout = True)
+        ylim = np.nanmax(data[i]['FLUX'])
         chemtype = fit[i]['chemtype']
         modelindex = 'modelindex_' + chemtype
         scale = 'scale_' + chemtype
+        text = [r'$\chi^2 = {}$'.format(np.round(fit[i]['chisq_' + chemtype][0], decimals = 1)), \
+                r'$\dot{M}_{\rm d}/{\rm M}_\odot~{\rm yr}^{-1} = {:0.1e}$'.format(fit[i]['DPR_' = chemtype]), \
+                r'$L/{\rm L}_\odot = {:0.2e}$'.format(fit[i]['Lum_' = chemtype])]
         #Wrapper to ignore UserWarnings about converting Masked values to Nan.
         warnings.filterwarnings('ignore')
+        title = 'ID = ' + str(fit[i]['ID']) + ', chemtype = ' + chemtype
+        xscale = 'log'; yscale = 'log'
+        xlabel = r'$\lambda (\mu$' + 'm)'; ylabel = r'$F_{\nu}$' + '(Jy)'
+        if par_summary:
+            fig, (a0, a1) = plt.subplots(2, 1, gridspec_kw = {'height_ratios': [3, 1]}, constrained_layout = True)
+            a0.set_title(title)
+            a0.set_xscale(xscale); a0.set_yscale(xscale)
+            a0.set_xlabel(xlabel); a0.set_ylabel(ylabel)
+            _ = a0.set_xlim(xlim)
+            _ = a0.set_ylim(1e-5 * ylim, 1.2 * ylim)
+        else:
+            a0 = plt.copy()
+            a0.title(title)
+            a0.xscale(xscale); a0.yscale(xscale)
+            a0.xlabel(xlabel); a0.ylabel(ylabel)
+            _ = a0.xlim(xlim)
+            _ = a0.ylim(1e-5 * ylim, 1.2 * ylim)
         for j in range(n_models):
             _ = a0.plot(grid[chemtype][fit[modelindex][i, 0]]['Lspec'], \
                         grid[chemtype][fit[modelindex][i, j]]['Fspec'] * fit[scale][i, j] * distscale[i], color = 'grey', alpha = 0.5)
@@ -223,12 +244,14 @@ def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', **kwargs):
         #Overlay data
         _ = a0.plot(lpivot[data[i]['BANDMAP']], data[i]['FLUX'], 'ko', linestyle = '')
         _ = a0.errorbar(lpivot[data[i]['BANDMAP']], data[i]['FLUX'], fmt = 'ko', yerr = data[i]['DFLUX'], linestyle = '')
-        a0.set_title('ID = ' + str(fit[i]['ID']) + ', chemtype = ' + chemtype)
-        a0.set_xscale('log'); a0.set_yscale('log')
-        a0.set_xlabel(r'$\lambda (\mu$' + 'm)'); a0.set_ylabel(r'$F_{\nu}$' + '(Jy)')
-        lim = np.nanmax(data[i]['FLUX'])
-        _ = a0.set_ylim(1e-5 * lim, 1.2 * lim)
-        gramsfit.par_summary(a1, data[i], grid, fit[i], n_models = n_models)
-        #fig.tight_layout()
-        fig.show()
+        #Overlay text
+        loc = [0.2, ylim * 1.1]
+        for i in range(len(text)):
+            a0.text(loc[0], loc[1] / (i * 0.1 + 1), text[i])
+        if par_summary:
+            gramsfit.par_summary(a1, data[i], grid, fit[i], n_models = n_models)
+            #fig.tight_layout()
+            fig.show()
+        else:
+            plt.show()
     pass
