@@ -7,6 +7,96 @@ import h5py
 from matplotlib import pyplot as plt
 import warnings
 import gramsfit
+from astropy import units
+
+
+def synthphot(lam, fnu, pypLibrary, filterNames=None,
+              filterFile=None):
+    """
+        Given a grid of wavelengths over which flux densities in F_nu units
+        are defined, return the synthetic photometry in the filters specified
+        by the filterNames list.
+
+        Args:
+        lam (ndarray, Quantity): wavelength grid in micron
+            must be 1-d array
+        fnu (ndarray, Quantity): flux density grid in F_nu units
+            can have shape (len(lam), ) or (n_sources, len(lam)), or
+            (len(lam), n_sources)
+        pypLibrary (str or pyphot.Library): name of the pyphot library file
+            or the pyphot library object
+        filterNames (list): list of filter names
+        filterFile (str): name of the filter file from which to obtain
+            the filterNames if not provided
+
+        Returns:
+        lpivot (ndarrray, Quantity): pivot wavelengths of the filters with
+            units identical to lam. Has shape len(filterNames).
+        fphot (Quantity): synthetic photometry in the filters with
+            units identical to fnu. Is a 2-d array with shape (n, m)
+            where one of n, m is len(filterNames). The other is the
+            number of sources (1 or more). The position of the wavelength
+            axis is the same as in fnu;
+            e.g., if fnu.shape = (n_sources, len(lam)),
+            fphot.shape = (n_sources, len(filterNames)).
+    """
+    # shape check
+    sh_fnu = fnu.shape
+    flip_shape = False
+
+    if len(sh_fnu) == 1:
+        if len(lam) != sh_fnu:
+            raise ValueError('lam and fnu must have the same shape!')
+        else:
+            fnu_ = fnu.reshape((1, len(fnu)))
+            flip_shape = True
+    else:
+        if len(lam) == sh_fnu[0]:
+            fnu_ = fnu.T
+        elif len(lam) == sh_fnu[1]:
+            fnu_ = fnu
+        else:
+            raise ValueError('At least one dimension of fnu must have\
+                    the same length as lam!')
+
+    ezlam = lam.value * pyp.unit[lam.unit.to_string()]
+
+    if pypLibrary is None:
+        raise ValueError('pypLibrary must be specified!')
+    if isinstance(pypLibrary, str):
+        fL = pyp.get_library(fname=pypLibrary)
+    else:  # assume it's a pyphot library object
+        fL = pypLibrary
+
+    if filterNames is None:
+        if filterFile is None:
+            raise ValueError('filterNames or filterFile must be specified!')
+        f = Table.read(filterFile, format='csv',
+                       names=('column', 'filtername'))
+        filterNames = [ff['filtername'].replace('/', '_') for ff in f]
+
+    filters = fL.load_filters(filterNames, interp=True, lamb=ezlam)
+    # need to automatically grab the unit for lpivot
+    lpivots = np.array([f.lpivot.magnitude for f in filters])
+    flamunits = 'W/m**3'
+    flam = fnu_.to(flamunits, equivalencies=units.spectral_density(lam))
+    ezflam = flam.value * pyp.unit[flamunits]
+
+    # fphot must have shape (n_sources, n_filters)
+    fphot = np.zeros((fnu_.shape[0], len(filters)))
+
+    for i, f, lp in zip(range(len(filters)), filters, lpivots):
+        ezfp = f.get_flux(ezlam, ezflam, axis=-1).to(flamunits)
+        fp = ezfp.magnitude * flam.unit
+        fphot[:, i] = fp.to(fnu_.unit,
+                            equivalencies=units.spectral_density(
+                                lp * lam.unit)).value
+
+    if flip_shape:
+        return lpivots, fphot.T
+    else:
+        return lpivots, fphot
+
 
 def setPlotParams():
     plt.figure(figsize = (8, 8))
@@ -69,11 +159,13 @@ def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filte
     h = h5py.File(libraryFile, 'w')
     h.create_group('filters')
     h.close()
-    h = pyp.HDF_Library(source = libraryFile)
+    h = pyp.HDF_Library(source=libraryFile)
     #Add filters to this object, without repetition.
-    _, u = np.unique([f.name for f in filters], return_index = True)
+    _, u = np.unique([f.name for f in filters], return_index=True)
     for f in list(np.array(filters)[u]):
-        h.add_filter(f)
+        # h.add_filter(f)
+        f.write_to("{0:s}".format(h.source),
+                   tablename='/filters/{0}'.format(f.name), append=True)
 
 def editgridheader(header, grid, filters):
     """Modify the header to the original grid, mainly for compatibility with the FITS standard
@@ -169,11 +261,17 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         grid.rename_column('MLR', 'DPR') #Changing MLR column name to DPR
         inlam = grid[0]['Lspec']
         infnu = grid['Fspec']
+        # infnu_star = grid['Fstar']
+
+        _, seds = synthphot(inlam * units.um, infnu * units.Jy, filterLibrary, filterNames)
+
+        # _, seds = pyp.extractSEDs(inlam, infnu, filters, Fnu=True, absFlux=False)
+        # _, seds_star = pyp.extractSEDs(inlam, infnu_star, filters, Fnu=True, absFlux=False)
         filters = filterLibrary.load_filters(filterNames, interp = True, lamb = inlam * pyp.unit['micron'])
-        _, seds = pyp.extractSEDs(inlam, infnu, filters, Fnu=True, absFlux=False)
         filters_used['lpivot'] = np.array([f.lpivot.magnitude for f in filters])
         del grid['Fphot']
         grid['Fphot'] = seds
+        # grid['Fphot_star'] = seds_star
         #Update the magnitudes as well
         zp = np.array([f.Vega_zero_Jy.magnitude for f in filters])
         del grid['mphot']
@@ -210,9 +308,9 @@ def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary 
         chemtype = fit[i]['chemtype']
         modelindex = 'modelindex_' + chemtype
         scale = 'scale_' + chemtype
-        text = [r'$\chi^2 = {}$'.format(np.round(fit[i]['chisq_' + chemtype][0], decimals = 1)), \
-                r'$\dot{M}_{\rm d}/{\rm M}_\odot~{\rm yr}^{-1} = {:0.1e}$'.format(fit[i]['DPR_' = chemtype]), \
-                r'$L/{\rm L}_\odot = {:0.2e}$'.format(fit[i]['Lum_' = chemtype])]
+        # text = [r'$\chi^2 = {}$'.format(np.round(fit[i]['chisq_' + chemtype][0], decimals = 1)), \
+        #         r'$\dot{M}_{\rm d}/{\rm M}_\odot~{\rm yr}^{-1} = {:0.1e}$'.format(fit[i]['DPR_' + chemtype]), \
+        #         r'$L/{\rm L}_\odot = {:0.2e}$'.format(fit[i]['Lum_' + chemtype])]
         #Wrapper to ignore UserWarnings about converting Masked values to Nan.
         warnings.filterwarnings('ignore')
         title = 'ID = ' + str(fit[i]['ID']) + ', chemtype = ' + chemtype
@@ -246,8 +344,8 @@ def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary 
         _ = a0.errorbar(lpivot[data[i]['BANDMAP']], data[i]['FLUX'], fmt = 'ko', yerr = data[i]['DFLUX'], linestyle = '')
         #Overlay text
         loc = [0.2, ylim * 1.1]
-        for i in range(len(text)):
-            a0.text(loc[0], loc[1] / (i * 0.1 + 1), text[i])
+        # for i in range(len(text)):
+        #     a0.text(loc[0], loc[1] / (i * 0.1 + 1), text[i])
         if par_summary:
             gramsfit.par_summary(a1, data[i], grid, fit[i], n_models = n_models)
             #fig.tight_layout()

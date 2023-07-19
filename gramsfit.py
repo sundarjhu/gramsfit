@@ -256,6 +256,7 @@ def prep_input(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None):
     ndata = len(data)
     #If the ID column is absent from the data, generate unique IDs from indices.
     if 'ID' not in data.columns:
+        print("... Generating unique IDs from indices.")
         data['ID'] = [str(i+1) for i in np.arange(len(data))]
     #If FITFLAG and/or DKPC keywords are provided, override values in the data table.
     if FITFLAG is not None:
@@ -264,6 +265,7 @@ def prep_input(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None):
         else:
             data['FITFLAG'] = FITFLAG
     if DKPC is not None:
+        print("... DKPC found in data.")
         if hasattr(DKPC, '__len__'):
             data['DKPC'] = DKPC
         else:
@@ -333,12 +335,14 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     data, ogrid, cgrid = prep_input(d, og, cg, ID = ID, FITFLAG = FITFLAG, DKPC = DKPC)
     d = 0; og = 0; cg = 0
     #computing chi-squares
+    print("... will now compute chi-squares.")
     if scale:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
             get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = True)
     else:
         chisq_o, chisq_c, modelindex_o, modelindex_c, scale_o, scale_c = \
             get_chisq(data, ogrid['Fphot'], cgrid['Fphot'], n_accept = n_accept, scale = scale)
+    print("... done computing chi-squares.")
     #set chemical types
     chemtype = get_chemtype(chisq_o[:, 0], chisq_c[:, 0])
     #scale data fluxes back to data['DKPC'] values, create a table to store output
@@ -353,6 +357,7 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
                  names = ('ID', 'chemtype', 'chisq_o', 'chisq_c', 'modelindex_o', 'modelindex_c', 'scale_o', 'scale_c'))
     #Compute best-fit parameter values
     if compute_pars:
+        print("... will now compute best-fit parameter values.")
         po, po_err, pc, pc_err = get_pars(fit, ogrid, cgrid)
         for c in po.columns:
             fit[c + '_o'] = po[c]
@@ -376,7 +381,7 @@ def gramsfit(data, ogrid, cgrid, ID = None, FITFLAG = None, DKPC = None, scale =
     return fit
 
 def deploy_gramsfit(data, ogrid, cgrid, scale):
-    """Internal function only to be accessed via gramsfit_driver.
+    """Internal function only to be accessed via gramsfit_wrapper.
     """
     print("depoly_gramsfit: executing gramsfit for {} sources.".format(len(data)))
     fit = gramsfit(data, ogrid, cgrid, scale = scale)
