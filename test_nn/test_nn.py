@@ -28,8 +28,8 @@ if not os.path.exists('grams_o.fits'):
 """
 Load the grid
 """
-og = Table.read('grams_o.fits', format='fits')
-print('Column names in grid file: ', og.colnames)
+orich_grid = Table.read('grams_o.fits', format='fits')
+print('Column names in grid file: ', orich_grid.colnames)
 
 """
 Synthetic photometry for an ndarray of spectra
@@ -37,10 +37,10 @@ Synthetic photometry for an ndarray of spectra
 # Pick 100 random models from the above grid,
 #   collect the spectra and compute photometry for this
 #   "spectrum matrix"
-k = np.random.choice(len(og), 100)
-lspec = og['Lspec'][0] * units.um
+k = np.random.choice(len(orich_grid), 100)
+lspec = orich_grid['Lspec'][0] * units.um
 # fspec is a ndarray of shape (nsources, len(lspec))
-fspec = og['Fspec'][k, :] * units.Jy
+fspec = orich_grid['Fspec'][k, :] * units.Jy
 filters_used = Table.read('filters.csv', format='csv',
                           names=('column', 'filterName'))
 filterLibrary = pyp.get_library(fname='filters.hd5')
@@ -55,9 +55,9 @@ Note: GridSearchCV is not performed. If `best_model.pkl` exists,
       file exists, the default hyperparameters are set (based
       on an initial GridSearchCV run).
 """
-fitgrid = og
+fitgrid = orich_grid
 # Example 1: select a subset of the grid as the prediction grid
-predictgrid1 = og[np.random.choice(len(og), 5)].copy()
+predictgrid1 = orich_grid[np.random.choice(len(orich_grid), 5)].copy()
 if os.path.exists('best_model.pkl'):
     gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=True)
 else:

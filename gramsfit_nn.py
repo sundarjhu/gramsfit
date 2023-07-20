@@ -20,9 +20,9 @@ def download_grid():
     file_link = {'o': 'https://ndownloader.figshare.com/files/9684331',
                  'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in ['o', 'c']:
-        file_name = 'grams_' + c + '.fits'
+        file_name = f'grams_{c}.fits'
         if not os.path.exists(file_name):
-            print('Downloading ' + file_name)
+            print(f'Downloading {file_name}')
             urllib.request.urlretrieve(file_link[c], file_name)
             grid, header = fits.getdata(file_name, header=True)
             grid = Table(grid)
@@ -32,7 +32,7 @@ def download_grid():
             g.header = header
             g.writeto(file_name, overwrite=True)
         else:
-            print(file_name + ' already exists')
+            print(f'{file_name} already exists')
 
 
 def do_NN(X, y, do_CV=False):
@@ -99,19 +99,18 @@ def log_transform(X, par_cols):
             X[:, i] = torch.log10(X[:, i])
     return X
 
+def fit_nn(fitgrid, do_CV=False):
+    """Fit a neural network to the grid of spectra.
 
-def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
-    """
     Arguments:
     fitgrid: astropy table with the grid of parameters and spectra to fit
-    predictgrid: astropy table with the grid of parameters for which
-        spectra are to be predicted
-    do_CV: boolean, whether to perform cross-validation for NN hyperparameters
+    do_CV: boolean, whether to perform cross-validation
         CAUTION: this takes a long time!
         CV returns the best model and saves it to best_model.pkl.
         If best_model.pkl exists, it is read in; CV is not performed in this case.
+
     Returns:
-    predictgrid: the table will now have a column named 'Fspec_NN'.
+    pipeline: the trained neural network
     """
     # Features are obtained from the input grid parameters.
     # A feature is logarithmic if the corresponding parameter
@@ -125,8 +124,42 @@ def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
     # The target is the logarithm of the flux density.
     y = torch.tensor(np.log10(fitgrid['Fspec']))
 
-    # Train the neural network.
-    pipeline = do_NN(X, y, do_CV=do_CV)
+    return do_NN(X, y, do_CV=do_CV)
+
+
+def grid_fit_and_predict(fitgrid, predictgrid,
+                         do_CV=False, return_best_model=False):
+    """
+    Arguments:
+    fitgrid: astropy table with the grid of parameters and spectra to fit
+    predictgrid: astropy table with the grid of parameters for which
+        spectra are to be predicted
+    do_CV: boolean, whether to perform cross-validation for NN hyperparameters
+        CAUTION: this takes a long time!
+        CV returns the best model and saves it to best_model.pkl.
+        If best_model.pkl exists, it is read in; CV is not performed in this case.
+    return_best_model: boolean, whether to return the best model
+
+    Returns:
+    predictgrid: the table will now have a column named 'Fspec_NN'.
+    best_model: the best model either from CV or from default hyperparameters.
+    """
+    # # Features are obtained from the input grid parameters.
+    # # A feature is logarithmic if the corresponding parameter
+    # #   has a range greater than 100.
+    # # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
+    # # TBD: change this to only 7 parameters:
+    # par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
+    # # But this will require re-running the GridSearchCV.
+
+    # X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
+    # # The target is the logarithm of the flux density.
+    # y = torch.tensor(np.log10(fitgrid['Fspec']))
+
+    # # Train the neural network.
+    # pipeline = do_NN(X, y, do_CV=do_CV)
+
+    pipeline = fit_nn(fitgrid, do_CV=do_CV)
 
     # Test the neural network.
     X_test = log_transform(torch.tensor(predictgrid[par_cols]), par_cols)
@@ -154,3 +187,6 @@ def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
         plt.savefig('NN_fit.png', dpi=300, bbox_inches='tight')
     else:
         print("column 'Fspec' not available in prediction grid, skipping plot.")
+
+    if return_best_model:
+        return predictgrid, pipeline
