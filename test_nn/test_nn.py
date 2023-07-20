@@ -86,7 +86,7 @@ def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
         np.array(thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim))
         for _ in range(nwalkers)
     ])
-    print(p0.shape)
+    # print(p0.shape)
 
     # Run the burn-in phase.
     print("Running burn-in phase...")
@@ -155,7 +155,7 @@ else:
     cols , _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=False, return_best_model=True)
 # predictgrid1 now has a column called "Fspec_NN" with the predicted
 #   spectra
-print(predictgrid1['Fspec_NN'])
+# print(predictgrid1['Fspec_NN'])
 
 # Example 2: set the parameters of predictgrid
 #   using an ndarray of shape (nsources, npars), with npars=7
@@ -173,9 +173,9 @@ else:
     cols, _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid2, do_CV=False, return_best_model=True)
 # predictgrid2 now has a column called "Fspec_NN" with the predicted
 #   spectra
-print(predictgrid2['Fspec_NN'])
+# print(predictgrid2['Fspec_NN'])
 
-print("Columns: ", cols)
+# print("Columns: ", cols)
 
 """
 Special case: data and grid have the same set of filters,
