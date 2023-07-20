@@ -99,6 +99,20 @@ def log_transform(X, par_cols):
             X[:, i] = torch.log10(X[:, i])
     return X
 
+def predict_nn(pipeline, X_test):
+    """Predict the spectrum for a given set of parameters.
+
+    Arguments:
+    pipeline: the trained neural network
+    X_test: input features (grid parameters)
+
+    Returns:
+    y_pred: the predicted spectrum
+    """
+    par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
+    X_test = log_transform(torch.Tensor(X_test[par_cols]), par_cols)
+    return 10**interp_grid(pipeline, X_test)
+
 def fit_nn(fitgrid, do_CV=False):
     """Fit a neural network to the grid of spectra.
 
@@ -149,7 +163,7 @@ def grid_fit_and_predict(fitgrid, predictgrid,
     # #   has a range greater than 100.
     # # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
     # # TBD: change this to only 7 parameters:
-    # par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
+    par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
     # # But this will require re-running the GridSearchCV.
 
     # X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
