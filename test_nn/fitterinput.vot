@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Produced with astropy.io.votable version 5.2.2
+     http://www.astropy.org/ -->
+<VOTABLE version="1.4" xmlns="http://www.ivoa.net/xml/VOTable/v1.3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ivoa.net/xml/VOTable/v1.3 http://www.ivoa.net/xml/VOTable/VOTable-1.4.xsd">
+ <RESOURCE type="results">
+  <TABLE>
+   <FIELD ID="ID" arraysize="9" datatype="unicodeChar" name="ID"/>
+   <FIELD ID="FLUX" arraysize="18" datatype="double" name="FLUX"/>
+   <FIELD ID="DFLUX" arraysize="18" datatype="double" name="DFLUX"/>
+   <FIELD ID="FITFLAG" arraysize="18" datatype="bit" name="FITFLAG"/>
+   <FIELD ID="DETFLAG" arraysize="18" datatype="bit" name="DETFLAG"/>
+   <FIELD ID="BANDMAP" arraysize="18" datatype="long" name="BANDMAP"/>
+   <FIELD ID="MAG" arraysize="18" datatype="double" name="MAG"/>
+   <FIELD ID="DMAG" arraysize="18" datatype="double" name="DMAG"/>
+   <FIELD ID="DKPC" datatype="double" name="DKPC"/>
+   <FIELD ID="DDKPC" datatype="double" name="DDKPC"/>
+   <DATA>
+    <TABLEDATA>
+     <TR>
+      <TD>SN2023ixf</TD>
+      <TD>1.52187e-05 1.15951e-05 2.4656e-05 1.72727e-08 8.74712e-08 1.98459e-07 4.42253e-07 4.99015e-07 7.27162e-07 3.52113e-07 6.08862e-07 2.16867e-07 5.06667e-06 5.26995e-07 3.05064e-05 2.20557e-05 4.53181e-05 0.00012891</TD>
+      <TD>5.179544593676089e-06 3.788503231917559e-06 6.27227011627577e-06 NaN NaN NaN 4.3398414725655975e-07 4.821627514778409e-07 NaN 3.5133767469811646e-07 NaN NaN NaN 5.1996679388638e-07 6.447692093115945e-06 5.253061116333857e-06 NaN NaN</TD>
+      <TD>111000010000001100</TD>
+      <TD>111000010000001100</TD>
+      <TD>5 4 6 10 13 0 0 3 11 1 9 12 14 2 7 8 15 16</TD>
+      <TD>19.669644172840858 20.441949513634835 18.670933034356022 28.550455276589293 26.68066034994814 25.39962307959667 24.525486629277815 24.348172493339145 24.454092617870018 24.91236734702765 23.367513309840167 25.67628136478923 21.673904842106808 24.471528561108094 17.49020191480849 17.367992229068058 16.092029764193576 14.308402604991267</TD>
+      <TD>0.37127724409908547 0.3564326462143541 0.2775149877070204 NaN NaN NaN 1.070501769287822 1.0540576576272631 NaN 1.0884963433332135 NaN NaN NaN 1.076349779441577 0.23056726108738276 0.259821998527152 NaN NaN</TD>
+      <TD>6848.571591258547</TD>
+      <TD>315.4998660441315</TD>
+     </TR>
+    </TABLEDATA>
+   </DATA>
+  </TABLE>
+ </RESOURCE>
+</VOTABLE>
