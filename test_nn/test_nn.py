@@ -138,8 +138,8 @@ def lnprior(thetas):
     # Later we will create something more complex, based on the density of models in the training set.
 
     lp = torch.zeros(thetas.shape[1])
-    lp[thetas < thetas_min] = -np.inf
-    lp[thetas > thetas_max] = -np.inf
+    lp[thetas[-1, :] < thetas_min] = -np.inf
+    lp[thetas[-1, :] > thetas_max] = -np.inf
 
     return lp # -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
 
