@@ -34,13 +34,12 @@ def lnlike(thetas, y, yerr):
 
     _, seds = gramsfit_utils.synthphot(lspec, spectra, filterLibrary, filterNames)
 
-    residue = (seds - y) / yerr
-    import pdb; pdb.set_trace()
-    chisq = np.nansum(residue[detbands]**2, axis=1)
+    residue = ((seds - y) / yerr).flatten()
+    chisq = np.nansum(residue[detbands]**2)
     if len(ndetbands) > 0:
-        chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])), axis = 0)
+        chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])))
 
-    return -0.5 * np.nansum(residue**2, axis=1)
+    return -0.5 * chisq
 
 def lnprior(thetas):
     """Evaluate the log-prior for a given set of parameters.
