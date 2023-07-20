@@ -144,6 +144,13 @@ def lnprior(thetas):
     return lp # -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
 
 def lnprob(thetas, y, yerr):
+    # if thetas is a 1-dimensional array (only one set of parameters)
+    #   then reshape it to a 2-dimensional array of shape (1, nparameters)
+    if len(thetas.shape) == 1:
+        thetas1 = torch.Tensor(thetas.reshape((1, len(thetas))))
+    else:
+        thetas1 = torch.Tensor(thetas)
+    
     return lnprior(torch.Tensor(thetas)) + lnlike(torch.Tensor(thetas), y, yerr)
 
 def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
