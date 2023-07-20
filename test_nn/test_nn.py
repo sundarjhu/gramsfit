@@ -112,7 +112,7 @@ def lnlike(thetas, y, yerr):
     # First we need to predict the spectrum for each set of parameters.
     # This is done using the neural network.
 
-    spectra = gramsfit_nn.predict_nn(best_model, thetas, cols)
+    spectra = gramsfit_nn.predict_nn(best_model, thetas, cols) * units.Unit(flux_unit)
 
     # now we compute the synthetic photometry
 
@@ -175,4 +175,12 @@ data = Table.read('fitterinput.vot', format='votable')
 k = np.nonzero(data['FITFLAG'][0])[0]
 y = np.array(data['FLUX'][0, k])
 yerr = np.array(data['DFLUX'][0, k])
+# The following is important since the synthphot function
+#   (called in lnlike above) requires the flux and wavelength units.
+# The wavelength units are specified whenever the filterLibrary is
+#   created, so we only need to worry about the flux units below.
+if data['FLUX'].unit is None:
+    flux_unit = 'Jy'
+else:
+    flux_unit = data['FLUX'].unit.to_string()
 do_MCMC(y, yerr, nwalkers=1000, nsteps=1000, nburn=100)
