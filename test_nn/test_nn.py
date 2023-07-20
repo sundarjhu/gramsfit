@@ -91,7 +91,7 @@ print("Columns: ", cols)
 # thetas_min = np.min(fitgrid[par_cols], axis=0)
 # thetas_max = np.max(fitgrid[par_cols], axis=0)
 thetas_min = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().min(axis=0)))
-thetas_max = torch.as_tenso(np.array(fitgrid[par_cols].to_pandas().max(axis=0)))
+thetas_max = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().max(axis=0)))
 
 def lnlike(thetas, y, yerr):
     """Evaluate the log-likelihood for a given set of parameters.
