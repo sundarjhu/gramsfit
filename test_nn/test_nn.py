@@ -84,3 +84,82 @@ else:
 #   spectra
 print(predictgrid2['Fspec_NN'])
 
+# We need to set some ranges to get us started
+thetas_min = np.min(fitgrid[par_cols], axis=0)
+thetas_max = np.max(fitgrid[par_cols], axis=0)
+
+def lnlike(thetas, y, yerr):
+    """Evaluate the log-likelihood for a given set of parameters.
+    
+    Arguments:
+    thetas: ndarray of shape (npar, ngrid)
+        the parameters for which the log-likelihood is to be evaluated
+    y: ndarray of shape (nwave)
+        the observed spectrum
+    yerr: ndarray of shape (nwave)
+        the uncertainty in the observed spectrum
+    
+    Returns:
+    loglike: ndarray of shape (ngrid)
+        the log-likelihood for each set of parameters
+    """
+
+    # First we need to predict the spectrum for each set of parameters.
+    # This is done using the neural network.
+
+    spectra = gramsfit_nn.predict(best_model, thetas)
+
+    # now we compute the synthetic photometry
+
+    _, seds = gramsfit_utils.synthphot(lspec, spectra, filterLibrary, filterNames)
+
+    return -0.5 * np.sum((seds - y)**2 / yerr**2, axis=1)
+
+def lnprior(thetas):
+    """Evaluate the log-prior for a given set of parameters.
+    
+    Arguments:
+    thetas: ndarray of shape (npar, ngrid)
+        the parameters for which the log-prior is to be evaluated
+    
+    Returns:
+    logprior: ndarray of shape (ngrid)
+        the log-prior for each set of parameters
+    """
+
+    # This function should return -np.inf for any set of parameters
+    #   that are outside the prior range, and 0 otherwise.
+    #  For now, we assume a uniform prior over the entire parameter range.
+    # Later we will create something more complex, based on the density of models in the training set.
+
+    return -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
+
+def lnprob(thetas, y, yerr):
+    return lnprior(thetas) + lnlike(thetas, y, yerr)
+
+def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
+    import emcee
+
+    # Set up the sampler.
+    ndim = len(thetas_min)
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(y, yerr))
+
+    # Initialize the walkers.
+    p0 = [
+        thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim)
+        for _ in range(nwalkers)
+    ]
+
+    # Run the burn-in phase.
+    print("Running burn-in phase...")
+    p0, _, _ = sampler.run_mcmc(p0, nburn)
+    sampler.reset()
+
+    # Run the production phase.
+    print("Running production phase...")
+    sampler.run_mcmc(p0, nsteps)
+
+    return sampler
+
+# This line won't work yet, because we don't have any data to work on.
+do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100)
