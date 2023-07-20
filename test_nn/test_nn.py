@@ -34,7 +34,13 @@ def lnlike(thetas, y, yerr):
 
     _, seds = gramsfit_utils.synthphot(lspec, spectra, filterLibrary, filterNames)
 
-    return -0.5 * np.sum((seds - y)**2 / yerr**2, axis=1)
+    residue = (seds - y) / yerr
+    import pdb; pdb.set_trace()
+    chisq = np.nansum(residue[detbands]**2, axis=1)
+    if len(ndetbands) > 0:
+        chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])), axis = 0)
+
+    return -0.5 * np.nansum(residue**2, axis=1)
 
 def lnprior(thetas):
     """Evaluate the log-prior for a given set of parameters.
@@ -66,8 +72,8 @@ def lnprob(thetas, y, yerr):
         thetas1 = torch.Tensor(thetas.reshape((1, len(thetas))))
     else:
         thetas1 = torch.Tensor(thetas)
-    
-    return lnprior(torch.Tensor(thetas)) + lnlike(torch.Tensor(thetas), y, yerr)
+
+    return lnprior(thetas1) + lnlike(thetas1, y, yerr)
 
 def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     import emcee
@@ -157,8 +163,8 @@ print(predictgrid1['Fspec_NN'])
 #   with the following column names:
 par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin',
             'tau10', 'Lum']
-X_test = np.array([[3500, .5, 1.0, 2.1, 1300, 1.1, 1e4],
-                   [4100, .5, 1.0, 2.3, 1100, 0.1, 8e3]])
+X_test = np.array([[3500, -.5, 1.0, 2.1, 1300, 1.1, 1e4],
+                   [4100, -.5, 1.0, 2.3, 1100, 0.1, 8e3]])
 predictgrid2 = Table(X_test, names=par_cols)
 # Note: GridSearchCV is not performed. If `best_model.pkl` exists,
 #       the existing GridSearchCV result is used.
@@ -173,9 +179,26 @@ print(predictgrid2['Fspec_NN'])
 print("Columns: ", cols)
 
 """
-Run MCMC
+Special case: data and grid have the same set of filters,
+    but (a) there are multiple observations for a given filter
+    and/or (b) there are some bands with detection limits and/or
+               that are not to be fit.
+    (a) is resolved using the BANDMAP column in the data table,
+    (b) is resolved using the DETFLAG and FITFLAG columns.
 """
 data = Table.read('fitterinput.vot', format='votable')
+filters_used = Table.read('filters.csv', format='csv',
+                          names=('column', 'filterName'))
+filterLibrary = pyp.get_library(fname='filters.hd5')
+filterNames = np.array([f['filterName'].replace('/', '_')
+                        for f in filters_used])
+detbands = np.nonzero((data['DETFLAG'][0])[data['FITFLAG'][0]])[0]
+ndetbands = np.nonzero((~data['DETFLAG'][0])[data['FITFLAG'][0]])[0]
+filterNames = filterNames[data['BANDMAP'][0]]
+
+
+
+
 k = np.nonzero(data['FITFLAG'][0])[0]
 y = np.array(data['FLUX'][0, k])
 yerr = np.array(data['DFLUX'][0, k])
