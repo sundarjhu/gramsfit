@@ -155,7 +155,7 @@ def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
 
     # Initialize the walkers.
     p0 = np.asarray([
-        thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim)
+        np.array(thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim))
         for _ in range(nwalkers)
     ])
     print(p0.shape)
