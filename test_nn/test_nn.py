@@ -60,9 +60,9 @@ fitgrid = orich_grid
 # Example 1: select a subset of the grid as the prediction grid
 predictgrid1 = orich_grid[np.random.choice(len(orich_grid), 5)].copy()
 if os.path.exists('best_model.pkl'):
-    gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=True)
+    cols, _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=True, return_best_model=True)
 else:
-    gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=False)
+    cols , _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid1, do_CV=False, return_best_model=True)
 # predictgrid1 now has a column called "Fspec_NN" with the predicted
 #   spectra
 print(predictgrid1['Fspec_NN'])
@@ -78,16 +78,20 @@ predictgrid2 = Table(X_test, names=par_cols)
 # Note: GridSearchCV is not performed. If `best_model.pkl` exists,
 #       the existing GridSearchCV result is used.
 if os.path.exists('best_model.pkl'):
-    gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid2, do_CV=True)
+    cols, _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid2, do_CV=True, return_best_model=True)
 else:
-    gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid2, do_CV=False)
+    cols, _, best_model = gramsfit_nn.grid_fit_and_predict(fitgrid, predictgrid2, do_CV=False, return_best_model=True)
 # predictgrid2 now has a column called "Fspec_NN" with the predicted
 #   spectra
 print(predictgrid2['Fspec_NN'])
 
+print("Columns: ", cols)
+
 # We need to set some ranges to get us started
-thetas_min = torch.as_tensor(np.min(fitgrid[par_cols], axis=0))
-thetas_max = torch.as_tensor(np.max(fitgrid[par_cols], axis=0))
+# thetas_min = np.min(fitgrid[par_cols], axis=0)
+# thetas_max = np.max(fitgrid[par_cols], axis=0)
+thetas_min = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().min(axis=0)))
+thetas_max = torch.as_tenso(np.array(fitgrid[par_cols].to_pandas().max(axis=0)))
 
 def lnlike(thetas, y, yerr):
     """Evaluate the log-likelihood for a given set of parameters.
@@ -108,7 +112,7 @@ def lnlike(thetas, y, yerr):
     # First we need to predict the spectrum for each set of parameters.
     # This is done using the neural network.
 
-    spectra = gramsfit_nn.predict(best_model, thetas)
+    spectra = gramsfit_nn.predict_nn(best_model, thetas, cols)
 
     # now we compute the synthetic photometry
 
@@ -133,14 +137,14 @@ def lnprior(thetas):
     #  For now, we assume a uniform prior over the entire parameter range.
     # Later we will create something more complex, based on the density of models in the training set.
 
-    lp = np.zeros(thetas.shape[1])
+    lp = torch.zeros(thetas.shape[1])
     lp[thetas < thetas_min] = -np.inf
     lp[thetas > thetas_max] = -np.inf
 
     return lp # -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
 
 def lnprob(thetas, y, yerr):
-    return lnprior(thetas) + lnlike(thetas, y, yerr)
+    return lnprior(torch.Tensor(thetas)) + lnlike(torch.Tensor(thetas), y, yerr)
 
 def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     import emcee
@@ -150,14 +154,15 @@ def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(y, yerr))
 
     # Initialize the walkers.
-    p0 = [
+    p0 = np.asarray([
         thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim)
         for _ in range(nwalkers)
-    ]
+    ])
+    print(p0.shape)
 
     # Run the burn-in phase.
     print("Running burn-in phase...")
-    p0, _, _ = sampler.run_mcmc(p0, nburn)
+    p0, _, _ = sampler.run_mcmc(p0, nburn, skip_initial_state_check=True)
     sampler.reset()
 
     # Run the production phase.
@@ -166,5 +171,8 @@ def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
 
     return sampler
 
-# This line won't work yet, because we don't have any data to work on.
-do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100)
+data = Table.read('fitterinput.vot', format='votable')
+k = np.nonzero(data['FITFLAG'][0])[0]
+y = np.array(data['FLUX'][0, k])
+yerr = np.array(data['DFLUX'][0, k])
+do_MCMC(y, yerr, nwalkers=1000, nsteps=1000, nburn=100)

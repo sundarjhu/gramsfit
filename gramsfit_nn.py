@@ -92,28 +92,46 @@ def interp_grid(pipeline, X_test):
     return pipeline.predict(X_test)
 
 
-def log_transform(X, par_cols):
-    par_range = np.nanmax(X, axis=0) / np.nanmin(X, axis=0)
-    for i in range(len(par_range)):
-        if par_range[i] >= 100:
-            X[:, i] = torch.log10(X[:, i])
-    return X
+def log_transform(X, cols=None):
+    """
+    Arguments:
+    X -- ndarray of input features
+    cols -- array of booleans, indicating which columns to transform
+    """
+    X1 = torch.empty_like(X)
+    _ = X1.copy_(X)
+    if cols is None:
+        cols = np.zeros(X.shape[1], dtype=bool)
+        par_range = np.nanmax(X, axis=0) / np.nanmin(X, axis=0)
+        for i in range(len(par_range)):
+            if par_range[i] >= 100:
+                cols[i] = True
+                X1[:, i] = torch.log10(X[:, i])
+    else:
+        for i in range(len(cols)):
+            if cols[i]:
+                X1[:, i] = torch.log10(X[:, i])
+    return X1, cols
 
-def predict_nn(pipeline, X_test):
+def predict_nn(pipeline, X_test, cols=None):
     """Predict the spectrum for a given set of parameters.
 
     Arguments:
     pipeline: the trained neural network
     X_test: input features (grid parameters)
+    cols: array of booleans, indicating which columns to transform
 
     Returns:
     y_pred: the predicted spectrum
     """
-    par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
-    X_test = log_transform(torch.Tensor(X_test[par_cols]), par_cols)
-    return 10**interp_grid(pipeline, X_test)
+    if cols is None:
+        raise ValueError("cols must be specified! Run fit_nn first.")
+        # X_test, cols = log_transform(torch.Tensor(X_test[par_cols]))
+    else:
+        X_test1, _ = log_transform(X_test, cols)
+    return 10**interp_grid(pipeline, X_test1)
 
-def fit_nn(fitgrid, do_CV=False):
+def fit_nn(fitgrid, par_cols=None, do_CV=False):
     """Fit a neural network to the grid of spectra.
 
     Arguments:
@@ -131,14 +149,17 @@ def fit_nn(fitgrid, do_CV=False):
     #   has a range greater than 100.
     # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
     # TBD: change this to only 7 parameters:
-    par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
+    # par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
     # But this will require re-running the GridSearchCV.
-
-    X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
+    if par_cols is None:
+        raise ValueError("par_cols must be specified!")
+    else:
+        X_in = torch.tensor(fitgrid[par_cols])
+    X, cols = log_transform(X_in)
     # The target is the logarithm of the flux density.
     y = torch.tensor(np.log10(fitgrid['Fspec']))
 
-    return do_NN(X, y, do_CV=do_CV)
+    return do_NN(X, y, do_CV=do_CV), cols
 
 
 def grid_fit_and_predict(fitgrid, predictgrid,
@@ -173,10 +194,11 @@ def grid_fit_and_predict(fitgrid, predictgrid,
     # # Train the neural network.
     # pipeline = do_NN(X, y, do_CV=do_CV)
 
-    pipeline = fit_nn(fitgrid, do_CV=do_CV)
+    pipeline, cols = fit_nn(fitgrid, par_cols=par_cols, do_CV=do_CV)
 
-    # Test the neural network.
-    X_test = log_transform(torch.tensor(predictgrid[par_cols]), par_cols)
+    # Test the neural network by passing only the relevant columns in an ndarray.
+    X_test_in = torch.tensor(predictgrid[par_cols])
+    X_test, _ = log_transform(X_test_in, cols)
     y_pred = interp_grid(pipeline, X_test)
     spec_pred = 10**y_pred
     predictgrid['Fspec_NN'] = spec_pred
@@ -203,4 +225,6 @@ def grid_fit_and_predict(fitgrid, predictgrid,
         print("column 'Fspec' not available in prediction grid, skipping plot.")
 
     if return_best_model:
-        return predictgrid, pipeline
+        return cols, predictgrid, pipeline
+    else:
+        return cols
