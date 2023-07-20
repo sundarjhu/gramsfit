@@ -6,6 +6,7 @@ from astropy.table import Table
 from astropy import units
 import numpy as np
 import os
+import torch
 
 
 """
@@ -85,8 +86,8 @@ else:
 print(predictgrid2['Fspec_NN'])
 
 # We need to set some ranges to get us started
-thetas_min = np.min(fitgrid[par_cols], axis=0)
-thetas_max = np.max(fitgrid[par_cols], axis=0)
+thetas_min = torch.as_tensor(np.min(fitgrid[par_cols], axis=0))
+thetas_max = torch.as_tensor(np.max(fitgrid[par_cols], axis=0))
 
 def lnlike(thetas, y, yerr):
     """Evaluate the log-likelihood for a given set of parameters.
@@ -132,7 +133,11 @@ def lnprior(thetas):
     #  For now, we assume a uniform prior over the entire parameter range.
     # Later we will create something more complex, based on the density of models in the training set.
 
-    return -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
+    lp = np.zeros(thetas.shape[1])
+    lp[thetas < thetas_min] = -np.inf
+    lp[thetas > thetas_max] = -np.inf
+
+    return lp # -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
 
 def lnprob(thetas, y, yerr):
     return lnprior(thetas) + lnlike(thetas, y, yerr)
