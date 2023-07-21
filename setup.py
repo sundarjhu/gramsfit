@@ -17,7 +17,8 @@ setup(
         'torch',
         'pyphot',
         'h5py',
-        'sklearn',
+        'scikit-learn',
+        'corner',
     ],
     # entry_points={
     #     'console_scripts': [
