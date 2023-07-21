@@ -154,7 +154,7 @@ def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filte
                        name = f.replace('/','_'), unit = temp['Wavelength'].unit.name, \
                        dtype = det_type)
         filters.append(g)
-    _ = subprocess.call(['rm', 'temp.vot'])
+    _ = os.remove("temp.vot")  # subprocess.call(['rm', 'temp.vot'])
     #Instantiate an hdf5 object to store filter information
     h = h5py.File(libraryFile, 'w')
     h.create_group('filters')

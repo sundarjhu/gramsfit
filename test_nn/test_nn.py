@@ -8,6 +8,7 @@ import numpy as np
 import os
 import torch
 
+likelihood = torch.distributions.normal.Normal(torch.tensor([0.0]), torch.tensor([1.0]))
 
 def lnlike(thetas, y, yerr):
     """Evaluate the log-likelihood for a given set of parameters.
@@ -32,18 +33,31 @@ def lnlike(thetas, y, yerr):
     # First we need to predict the spectrum for each set of parameters.
     # This is done using the neural network.
 
+    if torch.any(torch.isnan(thetas)):
+        raise ValueError("NaNs in thetas!")
+    if torch.any(thetas[:, cols] < 0):
+        print(thetas[:, cols])
+        print(cols)
+        raise ValueError("Negative values in thetas!")
+
     spectra = gramsfit_nn.predict_nn(best_model, thetas, cols) * units.Unit(flux_unit)
 
     # now we compute the synthetic photometry
 
     _, seds = gramsfit_utils.synthphot(lspec, spectra, filterLibrary, filterNames)
 
-    residue = ((seds - y) / yerr).flatten()
-    chisq = np.nansum(residue[detbands]**2)
-    if len(ndetbands) > 0:
-        chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])))
+    residue = torch.as_tensor(((seds - y) / yerr)) #.flatten()
+    #import pdb; pdb.set_trace()
 
-    return -0.5 * chisq
+    logprob = torch.nansum(likelihood.log_prob(residue[:, detbands]), dim=1)
+    if len(ndetbands) > 0:
+        logprob -= torch.nansum(torch.log(likelihood.cdf(residue[:, ndetbands])), dim=1)
+    
+    # chisq = np.nansum(residue[detbands]**2)
+    # if len(ndetbands) > 0:
+    #     chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])))
+
+    return logprob
 
 def lnprior(thetas):
     """Evaluate the log-prior for a given set of parameters.
@@ -62,9 +76,12 @@ def lnprior(thetas):
     #  For now, we assume a uniform prior over the entire parameter range.
     # Later we will create something more complex, based on the density of models in the training set.
 
-    lp = torch.zeros(thetas.shape[1])
-    lp[thetas[-1, :] < thetas_min] = -np.inf
-    lp[thetas[-1, :] > thetas_max] = -np.inf
+    lp = torch.zeros(thetas.shape[0])
+    # import pdb; pdb.set_trace()
+    lp[torch.any(thetas < thetas_min, dim=1)] = -torch.inf
+    lp[torch.any(thetas > thetas_max, dim=1)] = -torch.inf
+    # lp[thetas[-1, :] < thetas_min] = -np.inf
+    # lp[thetas[-1, :] > thetas_max] = -np.inf
 
     return lp # -np.inf if np.any((thetas < thetas_min) | (thetas > thetas_max)) else 0
 
@@ -76,30 +93,39 @@ def lnprob(thetas, y, yerr):
     else:
         thetas1 = torch.Tensor(thetas)
 
-    return lnprior(thetas1) + lnlike(thetas1, y, yerr)
+    prob = lnprior(thetas1)
+    prob[prob == 0] += lnlike(thetas1[prob==0], y, yerr)
+
+    return prob
 
 def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     import emcee
 
     # Set up the sampler.
     ndim = len(thetas_min)
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(y, yerr))
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(y, yerr), vectorize=True)
+
+    print("Minimum parameter values: ", thetas_min)
+    print("Maximum parameter values: ", thetas_max)
 
     # Initialize the walkers.
     p0 = np.asarray([
-        np.array(thetas_min + (thetas_max - thetas_min) * np.random.rand(ndim))
+        np.array(thetas_min + ((thetas_max - thetas_min) * np.random.rand(ndim)))
         for _ in range(nwalkers)
     ])
+
+    # import pdb; pdb.set_trace()
     # print(p0.shape)
 
     # Run the burn-in phase.
     print("Running burn-in phase...")
-    p0, _, _ = sampler.run_mcmc(p0, nburn, skip_initial_state_check=True)
+    p0, _, _ = sampler.run_mcmc(p0, nburn, skip_initial_state_check=True, progress=True)
+    print("Autocorrelation time for burn in: ", sampler.get_autocorr_time(quiet=True))
     sampler.reset()
 
     # Run the production phase.
     print("Running production phase...")
-    sampler.run_mcmc(p0, nsteps)
+    sampler.run_mcmc(p0, nsteps, skip_initial_state_check=True, progress=True)
 
     return sampler
 
@@ -140,6 +166,9 @@ filters_used = Table.read('filters.csv', format='csv',
                           names=('column', 'filterName'))
 filterLibrary = pyp.get_library(fname='filters.hd5')
 filterNames = [f['filterName'].replace('/', '_') for f in filters_used]
+filters = filterLibrary.load_filters(filterNames, interp=True, lamb=lspec)
+# need to automatically grab the unit for lpivot
+lpivots = np.array([f.lpivot.magnitude for f in filters])
 # seds is a ndarray of shape (nsources, nfilters)
 _, seds = gramsfit_utils.synthphot(lspec, fspec, filterLibrary, filterNames)
 
@@ -188,13 +217,19 @@ def prepdata(data, filterFile='filters.csv'):
                               names=('column', 'filterName'))
     filterNames = np.array([f['filterName'].replace('/', '_')
                             for f in filters_used])
+    
+    filters = filterLibrary.load_filters(filterNames, interp=True, lamb=lspec)
+    # need to automatically grab the unit for lpivot
+    lpivots = np.array([f.lpivot.magnitude for f in filters])
     # Select the correct set of filters in the order
     #   specified by the BANDMAP column
     #   this will duplicate filters if necessary
     filterNames = filterNames[data['BANDMAP'][0]]
+    lpivots = lpivots[data['BANDMAP'][0]]
     # Of these, select only the ones which are to be fit
     onlyfit = np.nonzero(data['FITFLAG'][0])[0]
     filterNames = filterNames[onlyfit]
+    lpivots = lpivots[onlyfit]
     # Record bands which are and are not upper/lower limits
     detbands = np.nonzero(data['DETFLAG'][0][onlyfit])[0]
     ndetbands = np.nonzero(~data['DETFLAG'][0][onlyfit])[0]
@@ -203,7 +238,7 @@ def prepdata(data, filterFile='filters.csv'):
     y = np.array(data['FLUX'][0][onlyfit])
     yerr = np.array(data['DFLUX'][0][onlyfit])
 
-    return filterNames, y, yerr, detbands, ndetbands
+    return filterNames, lpivots, y, yerr, detbands, ndetbands
 
 
 """
@@ -215,7 +250,13 @@ Special case: data and grid have the same set of filters,
     (b) is resolved using the DETFLAG and FITFLAG columns.
 """
 data = Table.read('fitterinput.vot', format='votable')
-filterNames, y, yerr, detbands, ndetbands = prepdata(data, filterFile='filters.csv')
+filterNames, lpivots, y, yerr, detbands, ndetbands = prepdata(data, filterFile='filters.csv')
+
+modeldist = float(fitgrid.meta['DISTKPC'])
+datadist = data['DKPC'][0]
+distscale = (datadist / modeldist)**2
+y = y * distscale
+yerr = yerr * distscale
 
 # The following is important since the synthphot function
 #   (called in lnlike above) requires the flux and wavelength units.
@@ -232,4 +273,50 @@ else:
 thetas_min = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().min(axis=0)))
 thetas_max = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().max(axis=0)))
 
-do_MCMC(y, yerr, nwalkers=1000, nsteps=1000, nburn=100)
+sampler = do_MCMC(y, yerr, nwalkers=1000, nsteps=100, nburn=1000)
+
+plot_ranges = [(thetas_min[i], thetas_max[i]) for i in range(len(thetas_min))]
+
+# quick diagnostics: autocorrelation time
+print("Autocorrelation time: ", sampler.get_autocorr_time(quiet=True))
+
+
+# make the triangle plot
+corner_mask = [True] * len(par_cols)
+corner_mask[par_cols.index('logg')] = False
+import corner
+fig = corner.corner(sampler.flatchain[:, corner_mask], labels=np.asarray(par_cols)[corner_mask], use_arviz=False)  #, range=plot_ranges)
+fig.savefig('triangle.png')
+
+# now print the median and 1-sigma errors
+print("16th, 50th and 84th percentiles:")
+for i, par in enumerate(par_cols):
+    print(par, np.percentile(sampler.flatchain[:, i], [16, 50, 84]))
+# now the maximum likelihood parameters
+maxlike = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
+print("Maximum likelihood parameters: " )
+for i, par in enumerate(par_cols):
+    print(par, maxlike[i])
+
+# now plot the best-fit model and posterior samples
+import matplotlib.pyplot as plt
+bestfit = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
+bestfit = torch.as_tensor(bestfit.reshape((1, len(bestfit))))
+bestfit_seds = gramsfit_nn.predict_nn(best_model, bestfit, cols)
+bestfit_seds = bestfit_seds * units.Unit(flux_unit)
+_, bestfit_phot = gramsfit_utils.synthphot(lspec, bestfit_seds, filterLibrary, filterNames)
+
+print("Distance scale factor: ", distscale)
+fig, ax = plt.subplots()
+ax.errorbar(lpivots, y/distscale, yerr=yerr/distscale, fmt='o', zorder=10)
+# plt.plot(filterNames, bestfit_phot, 'r-')
+ax.plot(fitgrid['Lspec'][0], bestfit_seds[0, :]/distscale, 'r-', zorder=2)
+# generate samples from the posterior
+samples = sampler.flatchain[np.random.choice(len(sampler.flatchain), 100)]
+sample_seds = gramsfit_nn.predict_nn(best_model, torch.as_tensor(samples), cols)
+sample_seds = sample_seds * units.Unit(flux_unit)
+ax.plot(fitgrid['Lspec'][0], sample_seds.T/distscale, 'k-', alpha=0.1, zorder=1)
+ax.set_ylim(1e-5*np.max(y/distscale), 3 * np.max(y/distscale))
+ax.set_yscale('log')
+ax.set_xscale('log')
+fig.savefig('bestfit.png')

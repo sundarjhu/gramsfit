@@ -17,7 +17,7 @@ setup(
         'torch',
         'pyphot',
         'h5py',
-        'sklearn',
+        'scikit-learn',
         'emcee',
     ],
     # entry_points={
