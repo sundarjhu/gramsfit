@@ -19,6 +19,7 @@ setup(
         'h5py',
         'scikit-learn',
         'corner',
+        'tqdm',
     ],
     # entry_points={
     #     'console_scripts': [
