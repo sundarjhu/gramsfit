@@ -23,6 +23,10 @@ def lnlike(thetas, y, yerr):
     Returns:
     loglike: ndarray of shape (ngrid)
         the log-likelihood for each set of parameters
+
+    Note:
+    The function uses detbands and ndetbands, arrays of indices into
+        the y, yerr denoting bands with and without detections respectively.
     """
 
     # First we need to predict the spectrum for each set of parameters.
