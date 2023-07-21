@@ -177,6 +177,31 @@ else:
 
 # print("Columns: ", cols)
 
+
+def prepdata(data, filterFile='filters.csv'):
+    # First, read in all available filters
+    filters_used = Table.read('filters.csv', format='csv',
+                              names=('column', 'filterName'))
+    filterNames = np.array([f['filterName'].replace('/', '_')
+                            for f in filters_used])
+    # Select the correct set of filters in the order
+    #   specified by the BANDMAP column
+    #   this will duplicate filters if necessary
+    filterNames = filterNames[data['BANDMAP'][0]]
+    # Of these, select only the ones which are to be fit
+    onlyfit = np.nonzero(data['FITFLAG'][0])[0]
+    filterNames = filterNames[onlyfit]
+    # Record bands which are and are not upper/lower limits
+    detbands = np.nonzero(data['DETFLAG'][0][onlyfit])[0]
+    ndetbands = np.nonzero(~data['DETFLAG'][0][onlyfit])[0]
+
+    # Pass only the photometry to be fit to the fitting routine
+    y = np.array(data['FLUX'][0][onlyfit])
+    yerr = np.array(data['DFLUX'][0][onlyfit])
+
+    return filterNames, y, yerr, detbands, ndetbands
+
+
 """
 Special case: data and grid have the same set of filters,
     but (a) there are multiple observations for a given filter
@@ -186,21 +211,8 @@ Special case: data and grid have the same set of filters,
     (b) is resolved using the DETFLAG and FITFLAG columns.
 """
 data = Table.read('fitterinput.vot', format='votable')
-filters_used = Table.read('filters.csv', format='csv',
-                          names=('column', 'filterName'))
-filterLibrary = pyp.get_library(fname='filters.hd5')
-filterNames = np.array([f['filterName'].replace('/', '_')
-                        for f in filters_used])
-detbands = np.nonzero((data['DETFLAG'][0])[data['FITFLAG'][0]])[0]
-ndetbands = np.nonzero((~data['DETFLAG'][0])[data['FITFLAG'][0]])[0]
-filterNames = filterNames[data['BANDMAP'][0]]
+filterNames, y, yerr, detbands, ndetbands = prepdata(data, filterFile='filters.csv')
 
-
-
-
-k = np.nonzero(data['FITFLAG'][0])[0]
-y = np.array(data['FLUX'][0, k])
-yerr = np.array(data['DFLUX'][0, k])
 # The following is important since the synthphot function
 #   (called in lnlike above) requires the flux and wavelength units.
 # The wavelength units are specified whenever the filterLibrary is
