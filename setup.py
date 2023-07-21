@@ -18,6 +18,8 @@ setup(
         'pyphot',
         'h5py',
         'scikit-learn',
+        'corner',
+        'tqdm',
         'emcee',
     ],
     # entry_points={
