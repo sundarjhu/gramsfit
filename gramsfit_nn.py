@@ -20,9 +20,9 @@ def download_grid():
     file_link = {'o': 'https://ndownloader.figshare.com/files/9684331',
                  'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in ['o', 'c']:
-        file_name = 'grams_' + c + '.fits'
+        file_name = f'grams_{c}.fits'
         if not os.path.exists(file_name):
-            print('Downloading ' + file_name)
+            print(f'Downloading {file_name}')
             urllib.request.urlretrieve(file_link[c], file_name)
             grid, header = fits.getdata(file_name, header=True)
             grid = Table(grid)
@@ -32,7 +32,7 @@ def download_grid():
             g.header = header
             g.writeto(file_name, overwrite=True)
         else:
-            print(file_name + ' already exists')
+            print(f'{file_name} already exists')
 
 
 def do_NN(X, y, do_CV=False):
@@ -92,15 +92,78 @@ def interp_grid(pipeline, X_test):
     return pipeline.predict(X_test)
 
 
-def log_transform(X, par_cols):
-    par_range = np.nanmax(X, axis=0) / np.nanmin(X, axis=0)
-    for i in range(len(par_range)):
-        if par_range[i] >= 100:
-            X[:, i] = torch.log10(X[:, i])
-    return X
+def log_transform(X, cols=None):
+    """
+    Arguments:
+    X -- ndarray of input features
+    cols -- array of booleans, indicating which columns to transform
+    """
+    X1 = torch.empty_like(X)
+    _ = X1.copy_(X)
+    if cols is None:
+        cols = np.zeros(X.shape[1], dtype=bool)
+        par_range = np.nanmax(X, axis=0) / np.nanmin(X, axis=0)
+        for i in range(len(par_range)):
+            if par_range[i] >= 100:
+                cols[i] = True
+                X1[:, i] = torch.log10(X[:, i])
+    else:
+        for i in range(len(cols)):
+            if cols[i]:
+                X1[:, i] = torch.log10(X[:, i])
+    return X1, cols
+
+def predict_nn(pipeline, X_test, cols=None):
+    """Predict the spectrum for a given set of parameters.
+
+    Arguments:
+    pipeline: the trained neural network
+    X_test: input features (grid parameters)
+    cols: array of booleans, indicating which columns to transform
+
+    Returns:
+    y_pred: the predicted spectrum
+    """
+    if cols is None:
+        raise ValueError("cols must be specified! Run fit_nn first.")
+        # X_test, cols = log_transform(torch.Tensor(X_test[par_cols]))
+    else:
+        X_test1, _ = log_transform(X_test, cols)
+    return 10**interp_grid(pipeline, X_test1)
+
+def fit_nn(fitgrid, par_cols=None, do_CV=False):
+    """Fit a neural network to the grid of spectra.
+
+    Arguments:
+    fitgrid: astropy table with the grid of parameters and spectra to fit
+    do_CV: boolean, whether to perform cross-validation
+        CAUTION: this takes a long time!
+        CV returns the best model and saves it to best_model.pkl.
+        If best_model.pkl exists, it is read in; CV is not performed in this case.
+
+    Returns:
+    pipeline: the trained neural network
+    """
+    # Features are obtained from the input grid parameters.
+    # A feature is logarithmic if the corresponding parameter
+    #   has a range greater than 100.
+    # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
+    # TBD: change this to only 7 parameters:
+    # par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
+    # But this will require re-running the GridSearchCV.
+    if par_cols is None:
+        raise ValueError("par_cols must be specified!")
+    else:
+        X_in = torch.tensor(fitgrid[par_cols])
+    X, cols = log_transform(X_in)
+    # The target is the logarithm of the flux density.
+    y = torch.tensor(np.log10(fitgrid['Fspec']))
+
+    return do_NN(X, y, do_CV=do_CV), cols
 
 
-def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
+def grid_fit_and_predict(fitgrid, predictgrid,
+                         do_CV=False, return_best_model=False):
     """
     Arguments:
     fitgrid: astropy table with the grid of parameters and spectra to fit
@@ -110,26 +173,32 @@ def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
         CAUTION: this takes a long time!
         CV returns the best model and saves it to best_model.pkl.
         If best_model.pkl exists, it is read in; CV is not performed in this case.
+    return_best_model: boolean, whether to return the best model
+
     Returns:
     predictgrid: the table will now have a column named 'Fspec_NN'.
+    best_model: the best model either from CV or from default hyperparameters.
     """
-    # Features are obtained from the input grid parameters.
-    # A feature is logarithmic if the corresponding parameter
-    #   has a range greater than 100.
-    # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
-    # TBD: change this to only 7 parameters:
+    # # Features are obtained from the input grid parameters.
+    # # A feature is logarithmic if the corresponding parameter
+    # #   has a range greater than 100.
+    # # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
+    # # TBD: change this to only 7 parameters:
     par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
-    # But this will require re-running the GridSearchCV.
+    # # But this will require re-running the GridSearchCV.
 
-    X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
-    # The target is the logarithm of the flux density.
-    y = torch.tensor(np.log10(fitgrid['Fspec']))
+    # X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
+    # # The target is the logarithm of the flux density.
+    # y = torch.tensor(np.log10(fitgrid['Fspec']))
 
-    # Train the neural network.
-    pipeline = do_NN(X, y, do_CV=do_CV)
+    # # Train the neural network.
+    # pipeline = do_NN(X, y, do_CV=do_CV)
 
-    # Test the neural network.
-    X_test = log_transform(torch.tensor(predictgrid[par_cols]), par_cols)
+    pipeline, cols = fit_nn(fitgrid, par_cols=par_cols, do_CV=do_CV)
+
+    # Test the neural network by passing only the relevant columns in an ndarray.
+    X_test_in = torch.tensor(predictgrid[par_cols])
+    X_test, _ = log_transform(X_test_in, cols)
     y_pred = interp_grid(pipeline, X_test)
     spec_pred = 10**y_pred
     predictgrid['Fspec_NN'] = spec_pred
@@ -154,3 +223,8 @@ def grid_fit_and_predict(fitgrid, predictgrid, do_CV=False):
         plt.savefig('NN_fit.png', dpi=300, bbox_inches='tight')
     else:
         print("column 'Fspec' not available in prediction grid, skipping plot.")
+
+    if return_best_model:
+        return cols, predictgrid, pipeline
+    else:
+        return cols

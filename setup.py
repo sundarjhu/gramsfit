@@ -18,6 +18,7 @@ setup(
         'pyphot',
         'h5py',
         'sklearn',
+        'emcee',
     ],
     # entry_points={
     #     'console_scripts': [
