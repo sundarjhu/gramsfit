@@ -94,6 +94,8 @@ def interp_grid(pipeline, X_test):
 
 def log_transform(X, cols=None):
     """
+    Depending on the dynamic range of each feature, either
+        return the untransformed feature or its logarithm.
     Arguments:
     X -- ndarray of input features
     cols -- array of booleans, indicating which columns to transform
@@ -163,12 +165,18 @@ def fit_nn(fitgrid, par_cols=None, do_CV=False):
 
 
 def grid_fit_and_predict(fitgrid, predictgrid,
+                         par_cols=['Lum', 'Teff', 'logg',
+                                   'C2O', 'Rin', 'tau10'],
+                         dep_par_cols=['Tin', 'DPR'],
                          do_CV=False, return_best_model=False):
     """
     Arguments:
     fitgrid: astropy table with the grid of parameters and spectra to fit
     predictgrid: astropy table with the grid of parameters for which
         spectra are to be predicted
+    par_cols: column names in fitgrid to use as parameters
+    dep_par_cols: columns names in fitgrid that are derived from the
+        base parameters in par_cols (namely, Tin, DPR)
     do_CV: boolean, whether to perform cross-validation for NN hyperparameters
         CAUTION: this takes a long time!
         CV returns the best model and saves it to best_model.pkl.
@@ -176,16 +184,16 @@ def grid_fit_and_predict(fitgrid, predictgrid,
     return_best_model: boolean, whether to return the best model
 
     Returns:
-    predictgrid: the table will now have a column named 'Fspec_NN'.
+    The output of the NN is the spectrum as well as the derived parameters.
+
+    predictgrid: for each input parameter combination, this grid will now contain
+        a column named 'Fspec_NN' with the predicted spectrum, and the
+        dep_par_cols values will also be populated with the NN predictions.
     best_model: the best model either from CV or from default hyperparameters.
     """
     # # Features are obtained from the input grid parameters.
     # # A feature is logarithmic if the corresponding parameter
     # #   has a range greater than 100.
-    # # par_cols = ['Teff', 'logg', 'Mass', 'C2O', 'Rin', 'tau1', 'tau10', 'Lum', 'DPR', 'Tin']
-    # # TBD: change this to only 7 parameters:
-    par_cols = ['Teff', 'logg', 'Mass', 'Rin', 'Tin', 'tau10', 'Lum']
-    # # But this will require re-running the GridSearchCV.
 
     # X = log_transform(torch.tensor(fitgrid[par_cols]), par_cols)
     # # The target is the logarithm of the flux density.
@@ -194,7 +202,8 @@ def grid_fit_and_predict(fitgrid, predictgrid,
     # # Train the neural network.
     # pipeline = do_NN(X, y, do_CV=do_CV)
 
-    pipeline, cols = fit_nn(fitgrid, par_cols=par_cols, do_CV=do_CV)
+    pipeline, cols = fit_nn(fitgrid, par_cols=par_cols,
+                            dep_par_cols=dep_par_cols, do_CV=do_CV)
 
     # Test the neural network by passing only the relevant columns in an ndarray.
     X_test_in = torch.tensor(predictgrid[par_cols])
