@@ -22,6 +22,10 @@ setup(
         'tqdm',
         'emcee',
     ],
+    extras_require={
+        "mcmc":["emcee", "corner", "zeus-mcmc", "arviz"],
+        "ns": ["dynesty"]
+        },
     # entry_points={
     #     'console_scripts': [
     #         'your-script-name=your_package_name.module_name:main',

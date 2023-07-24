@@ -32,7 +32,7 @@ def lnlike(thetas, y, yerr):
 
     # First we need to predict the spectrum for each set of parameters.
     # This is done using the neural network.
-
+    thetas = torch.as_tensor(thetas)
     if torch.any(torch.isnan(thetas)):
         raise ValueError("NaNs in thetas!")
     if torch.any(thetas[:, cols] < 0):
@@ -56,6 +56,9 @@ def lnlike(thetas, y, yerr):
     # chisq = np.nansum(residue[detbands]**2)
     # if len(ndetbands) > 0:
     #     chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])))
+
+    if flatten:
+        logprob = logprob.flatten()
 
     return logprob
 
@@ -98,6 +101,73 @@ def lnprob(thetas, y, yerr):
 
     return prob
 
+def ptform(u):
+    """Transform from the unit cube to the prior volume.
+
+    Arguments:
+    u: ndarray of shape (nwalkers, npar)
+        the unit cube values
+
+    Returns:
+    thetas: ndarray of shape (nwalkers, npar)
+        the transformed values
+    """
+    thetas = torch.as_tensor(u) * (thetas_max - thetas_min) + thetas_min
+    # if len(thetas.shape) == 1:
+    #     thetas = torch.as_tensor(thetas).unsqueeze(0) #thetas.reshape((1, len(thetas))
+
+    return thetas
+
+def lnlike_dynesty(thetas, y, yerr):
+    """Evaluate the log-likelihood for a given set of parameters.
+    
+    Arguments:
+    thetas: ndarray of shape (npar, ngrid)
+        the parameters for which the log-likelihood is to be evaluated
+    y: ndarray of shape (nwave)
+        the observed spectrum
+    yerr: ndarray of shape (nwave)
+        the uncertainty in the observed spectrum
+    
+    Returns:
+    loglike: ndarray of shape (ngrid)
+        the log-likelihood for each set of parameters
+
+    Note:
+    The function uses detbands and ndetbands, arrays of indices into
+        the y, yerr denoting bands with and without detections respectively.
+    """
+
+    # First we need to predict the spectrum for each set of parameters.
+    # This is done using the neural network.
+    thetas = torch.as_tensor(thetas).unsqueeze(0)
+    #import pdb; pdb.set_trace()
+    if torch.any(torch.isnan(thetas)):
+        raise ValueError("NaNs in thetas!")
+    # if torch.any(thetas[:, cols] < 0):
+    #     print(thetas[:, cols])
+    #     print(cols)
+    #     raise ValueError("Negative values in thetas!")
+
+    spectra = gramsfit_nn.predict_nn(best_model, thetas, cols) * units.Unit(flux_unit)
+
+    # now we compute the synthetic photometry
+
+    _, seds = gramsfit_utils.synthphot(lspec, spectra, filterLibrary, filterNames)
+
+    residue = torch.as_tensor(((seds - y) / yerr)) #.flatten()
+    #import pdb; pdb.set_trace()
+
+    logprob = torch.nansum(likelihood.log_prob(residue[:, detbands]))
+    if len(ndetbands) > 0:
+        logprob -= torch.nansum(torch.log(likelihood.cdf(residue[:, ndetbands])))
+    
+    # chisq = np.nansum(residue[detbands]**2)
+    # if len(ndetbands) > 0:
+    #     chisq -= 2 * np.nansum(np.log(norm.cdf(residue[ndetbands])))
+
+    return logprob.item()
+
 def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     import emcee
 
@@ -126,6 +196,67 @@ def do_MCMC(y, yerr, nwalkers=100, nsteps=1000, nburn=100):
     # Run the production phase.
     print("Running production phase...")
     sampler.run_mcmc(p0, nsteps, skip_initial_state_check=True, progress=True)
+
+    return sampler
+
+
+def do_MCMC_zeus(y, yerr, nwalkers=100, nsteps=1000, n_burn=1000):
+    import zeus
+
+    # Set up the sampler.
+    ndim = len(thetas_min)
+    sampler = zeus.EnsembleSampler(nwalkers, ndim, lnprob, args=(y, yerr), vectorize=True)
+
+    print("Minimum parameter values: ", thetas_min)
+    print("Maximum parameter values: ", thetas_max)
+
+    # Initialize the walkers.
+    p0 = np.asarray([
+        np.array(thetas_min + ((thetas_max - thetas_min) * np.random.rand(ndim)))
+        for _ in range(nwalkers)
+    ])
+
+    # import pdb; pdb.set_trace()
+    # print(p0.shape)
+
+    # Run the burn-in phase.
+    print("Running burn-in phase...")
+    p0, _, _ = sampler.run_mcmc(p0, n_burn, progress=True)
+    print("Autocorrelation time for burn in: ", sampler.get_autocorr_time(quiet=True))
+    sampler.reset()
+
+    # Run the production phase.
+    print("Running production phase...")
+    sampler.run_mcmc(p0, nsteps, progress=True)
+
+    return sampler
+
+def lnlike_UN(thetas):
+    return lnlike_dynesty(thetas, y, yerr)
+
+def do_NS(dlogz=0.01):
+    #import ultranest
+    import dynesty
+    from dynesty import plotting as dyplot
+
+    # Set up the sampler.
+    ndim = len(thetas_min)
+    sampler = dynesty.NestedSampler(lnlike_dynesty, ptform, ndim, nlive=1000, logl_args=(y, yerr))
+    #sampler = ultranest.ReactiveNestedSampler(par_cols, lnlike_UN, ptform, vectorized=True)
+    print("Minimum parameter values: ", thetas_min)
+    print("Maximum parameter values: ", thetas_max)
+
+    # Run the burn-in phase.
+    print("Running Nested Sampling ...")
+    sampler.run_nested(dlogz=dlogz, print_progress=True) #, maxiter=1000)
+
+    # Plot the results
+    # import pdb; pdb.set_trace()
+    fig, axes = dyplot.traceplot(sampler.results, truths=thetas_max, show_titles=True, trace_cmap='viridis', trace_kwargs={'alpha': 0.3}, connect=True, connect_highlight=range(5), labels=par_cols)
+    fig.savefig('traceplot.png')
+
+    fig, axes = dyplot.cornerplot(sampler.results, truths=thetas_max, show_titles=True, labels=par_cols)
+    fig.savefig('cornerplot.png')
 
     return sampler
 
@@ -267,56 +398,119 @@ if data['FLUX'].unit is None:
 else:
     flux_unit = data['FLUX'].unit.to_string()
 
+
 # We need to set some ranges to get us started
 # thetas_min = np.min(fitgrid[par_cols], axis=0)
 # thetas_max = np.max(fitgrid[par_cols], axis=0)
 thetas_min = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().min(axis=0)))
 thetas_max = torch.as_tensor(np.array(fitgrid[par_cols].to_pandas().max(axis=0)))
 
-sampler = do_MCMC(y, yerr, nwalkers=1000, nsteps=100, nburn=1000)
+do_emcee=False
+if do_emcee:
+    sampler = do_MCMC(y, yerr, nwalkers=1000, nsteps=100, nburn=1000)
 
-plot_ranges = [(thetas_min[i], thetas_max[i]) for i in range(len(thetas_min))]
+    plot_ranges = [(thetas_min[i], thetas_max[i]) for i in range(len(thetas_min))]
 
-# quick diagnostics: autocorrelation time
-print("Autocorrelation time: ", sampler.get_autocorr_time(quiet=True))
+    # quick diagnostics: autocorrelation time
+    print("Autocorrelation time: ", sampler.get_autocorr_time(quiet=True))
 
 
-# make the triangle plot
-corner_mask = [True] * len(par_cols)
-corner_mask[par_cols.index('logg')] = False
-import corner
-fig = corner.corner(sampler.flatchain[:, corner_mask], labels=np.asarray(par_cols)[corner_mask], use_arviz=False)  #, range=plot_ranges)
-fig.savefig('triangle.png')
+    # make the triangle plot
+    corner_mask = [True] * len(par_cols)
+    corner_mask[par_cols.index('logg')] = False
+    import corner
+    fig = corner.corner(sampler.flatchain[:, corner_mask], labels=np.asarray(par_cols)[corner_mask], use_arviz=False)  #, range=plot_ranges)
+    fig.savefig('triangle_emcee.png')
 
-# now print the median and 1-sigma errors
-print("16th, 50th and 84th percentiles:")
-for i, par in enumerate(par_cols):
-    print(par, np.percentile(sampler.flatchain[:, i], [16, 50, 84]))
-# now the maximum likelihood parameters
-maxlike = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
-print("Maximum likelihood parameters: " )
-for i, par in enumerate(par_cols):
-    print(par, maxlike[i])
+    # now print the median and 1-sigma errors
+    print("16th, 50th and 84th percentiles:")
+    for i, par in enumerate(par_cols):
+        print(par, np.percentile(sampler.flatchain[:, i], [16, 50, 84]))
+    # now the maximum likelihood parameters
+    maxlike = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
+    print("Maximum likelihood parameters: " )
+    for i, par in enumerate(par_cols):
+        print(par, maxlike[i])
 
-# now plot the best-fit model and posterior samples
-import matplotlib.pyplot as plt
-bestfit = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
-bestfit = torch.as_tensor(bestfit.reshape((1, len(bestfit))))
-bestfit_seds = gramsfit_nn.predict_nn(best_model, bestfit, cols)
-bestfit_seds = bestfit_seds * units.Unit(flux_unit)
-_, bestfit_phot = gramsfit_utils.synthphot(lspec, bestfit_seds, filterLibrary, filterNames)
+    # now plot the best-fit model and posterior samples
+    import matplotlib.pyplot as plt
+    bestfit = sampler.flatchain[np.argmax(sampler.flatlnprobability)]
+    bestfit = torch.as_tensor(bestfit.reshape((1, len(bestfit))))
+    bestfit_seds = gramsfit_nn.predict_nn(best_model, bestfit, cols)
+    bestfit_seds = bestfit_seds * units.Unit(flux_unit)
+    _, bestfit_phot = gramsfit_utils.synthphot(lspec, bestfit_seds, filterLibrary, filterNames)
 
-print("Distance scale factor: ", distscale)
-fig, ax = plt.subplots()
-ax.errorbar(lpivots, y/distscale, yerr=yerr/distscale, fmt='o', zorder=10)
-# plt.plot(filterNames, bestfit_phot, 'r-')
-ax.plot(fitgrid['Lspec'][0], bestfit_seds[0, :]/distscale, 'r-', zorder=2)
-# generate samples from the posterior
-samples = sampler.flatchain[np.random.choice(len(sampler.flatchain), 100)]
-sample_seds = gramsfit_nn.predict_nn(best_model, torch.as_tensor(samples), cols)
-sample_seds = sample_seds * units.Unit(flux_unit)
-ax.plot(fitgrid['Lspec'][0], sample_seds.T/distscale, 'k-', alpha=0.1, zorder=1)
-ax.set_ylim(1e-5*np.max(y/distscale), 3 * np.max(y/distscale))
-ax.set_yscale('log')
-ax.set_xscale('log')
-fig.savefig('bestfit.png')
+    print("Distance scale factor: ", distscale)
+    fig, ax = plt.subplots()
+    ax.errorbar(lpivots, y/distscale, yerr=yerr/distscale, fmt='o', zorder=10)
+    # plt.plot(filterNames, bestfit_phot, 'r-')
+    ax.plot(fitgrid['Lspec'][0], bestfit_seds[0, :]/distscale, 'r-', zorder=2)
+    # generate samples from the posterior
+    samples = sampler.flatchain[np.random.choice(len(sampler.flatchain), 100)]
+    sample_seds = gramsfit_nn.predict_nn(best_model, torch.as_tensor(samples), cols)
+    sample_seds = sample_seds * units.Unit(flux_unit)
+    ax.plot(fitgrid['Lspec'][0], sample_seds.T/distscale, 'k-', alpha=0.1, zorder=1)
+    ax.set_ylim(1e-5*np.max(y/distscale), 3 * np.max(y/distscale))
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+    fig.savefig('bestfit_emcee.png')
+
+do_zeus=False
+if do_zeus:
+    sampler_zeus = do_MCMC_zeus(y, yerr, nwalkers=1000, nsteps=100, n_burn=1000)
+
+    plot_ranges = [(thetas_min[i], thetas_max[i]) for i in range(len(thetas_min))]
+    # quick diagnostics: autocorrelation time
+    print("Autocorrelation time: ", sampler_zeus.get_autocorr_time(quiet=True))
+
+
+    # make the triangle plot
+    corner_mask = [True] * len(par_cols)
+    corner_mask[par_cols.index('logg')] = False
+    import corner
+    fig = corner.corner(sampler_zeus.flatchain[:, corner_mask], labels=np.asarray(par_cols)[corner_mask], use_arviz=False)  #, range=plot_ranges)
+    fig.savefig('triangle_zeus.png')
+
+    # now print the median and 1-sigma errors
+    print("16th, 50th and 84th percentiles:")
+    for i, par in enumerate(par_cols):
+        print(par, np.percentile(sampler_zeus.flatchain[:, i], [16, 50, 84]))
+    # now the maximum likelihood parameters
+    maxlike = sampler_zeus.flatchain[np.argmax(sampler_zeus.flatlnprobability)]
+    print("Maximum likelihood parameters: " )
+    for i, par in enumerate(par_cols):
+        print(par, maxlike[i])
+
+    # now plot the best-fit model and posterior samples
+    import matplotlib.pyplot as plt
+    bestfit = sampler_zeus.flatchain[np.argmax(sampler_zeus.flatlnprobability)]
+    bestfit = torch.as_tensor(bestfit.reshape((1, len(bestfit))))
+    bestfit_seds = gramsfit_nn.predict_nn(best_model, bestfit, cols)
+    bestfit_seds = bestfit_seds * units.Unit(flux_unit)
+    _, bestfit_phot = gramsfit_utils.synthphot(lspec, bestfit_seds, filterLibrary, filterNames)
+
+    print("Distance scale factor: ", distscale)
+    fig, ax = plt.subplots()
+    ax.errorbar(lpivots, y/distscale, yerr=yerr/distscale, fmt='o', zorder=10)
+    # plt.plot(filterNames, bestfit_phot, 'r-')
+    ax.plot(fitgrid['Lspec'][0], bestfit_seds[0, :]/distscale, 'r-', zorder=2)
+    # generate samples from the posterior
+    samples = sampler_zeus.flatchain[np.random.choice(len(sampler_zeus.flatchain), 100)]
+    sample_seds = gramsfit_nn.predict_nn(best_model, torch.as_tensor(samples), cols)
+    sample_seds = sample_seds * units.Unit(flux_unit)
+    ax.plot(fitgrid['Lspec'][0], sample_seds.T/distscale, 'k-', alpha=0.1, zorder=1)
+    ax.set_ylim(1e-5*np.max(y/distscale), 3 * np.max(y/distscale))
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+    fig.savefig('bestfit_zeus.png')
+
+do_ns=True
+if do_ns:
+    # now do nested sampling
+    flatten = True
+    sampler_ns = do_NS(dlogz=0.5)
+
+# # now print the median and 1-sigma errors
+# print("16th, 50th and 84th percentiles:")
+# for i, par in enumerate(par_cols):
+#     print(par, np.percentile(sampler_ns.results.samples[:, i], [16, 50, 84]))
