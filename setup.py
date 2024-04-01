@@ -20,6 +20,7 @@ setup(
         'scikit-learn',
         'corner',
         'tqdm',
+        'emcee',
     ],
     # entry_points={
     #     'console_scripts': [

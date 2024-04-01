@@ -59,8 +59,6 @@ def synthphot(lam, fnu, pypLibrary, filterNames=None,
             raise ValueError('At least one dimension of fnu must have\
                     the same length as lam!')
 
-    ezlam = lam.value * pyp.unit[lam.unit.to_string()]
-
     if pypLibrary is None:
         raise ValueError('pypLibrary must be specified!')
     if isinstance(pypLibrary, str):
@@ -75,6 +73,10 @@ def synthphot(lam, fnu, pypLibrary, filterNames=None,
                        names=('column', 'filtername'))
         filterNames = [ff['filtername'].replace('/', '_') for ff in f]
 
+    ezlam = lam.value * pyp.unit[lam.unit.to_string()]
+    # # The following ensures that the interpolated grid is high enough resolution
+    # #       because remember: the GRAMS grid has crappy resolution!
+    # ezlam = np.geomspace(lam.value.min(), lam.value.max(), 1001) * pyp.unit[lam.unit.to_string()]
     filters = fL.load_filters(filterNames, interp=True, lamb=ezlam)
     # need to automatically grab the unit for lpivot
     lpivots = np.array([f.lpivot.magnitude for f in filters])
@@ -154,7 +156,7 @@ def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filte
                        name = f.replace('/','_'), unit = temp['Wavelength'].unit.name, \
                        dtype = det_type)
         filters.append(g)
-    _ = subprocess.call(['rm', 'temp.vot'])
+    _ = os.remove("temp.vot")  # subprocess.call(['rm', 'temp.vot'])
     #Instantiate an hdf5 object to store filter information
     h = h5py.File(libraryFile, 'w')
     h.create_group('filters')
@@ -227,7 +229,8 @@ def editgridheader(header, grid, filters):
         h.append((keys_orig[i], values_orig[i], comments_orig[i]), end = True)
     return h
 
-def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
+def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5',
+             outfile_suffix=''):
     """Compute GRAMS synthetic photometry in all the bands specified in infile, using the information
     from the filter library.
     INPUTS
@@ -241,6 +244,8 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
        NOTE: this file must have a one-line header.
 
        2) libraryFile: the name of for the output hdf5 library.
+
+       3) outfile_suffix: a string to append to the output grid file name.
     """
     filters_used = Table.read(infile, format = 'csv', names = ('column', 'filterName'))
     filterLibrary = pyp.get_library(fname = libraryFile)
@@ -250,7 +255,7 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
     file_link = {'o': 'https://ndownloader.figshare.com/files/9684331', \
                  'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in chemtype:
-        gridfile = 'grams_' + c + '.fits'
+        gridfile = 'grams_' + c + outfile_suffix + '.fits'
         if os.path.isfile(gridfile):
             subprocess.call(['rm', gridfile])
         grid, header = fits.getdata(file_link[c], 1, header = True)
@@ -267,7 +272,11 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
 
         # _, seds = pyp.extractSEDs(inlam, infnu, filters, Fnu=True, absFlux=False)
         # _, seds_star = pyp.extractSEDs(inlam, infnu_star, filters, Fnu=True, absFlux=False)
-        filters = filterLibrary.load_filters(filterNames, interp = True, lamb = inlam * pyp.unit['micron'])
+        # filters = filterLibrary.load_filters(filterNames, interp = True, lamb = inlam * pyp.unit['micron'])
+        # The following ensures that the interpolated grid is high enough resolution
+        #       because remember: the GRAMS grid has crappy resolution!
+        lamb = np.geomspace(inlam.min(), inlam.max(), 1000) * pyp.unit['micron']
+        filters = filterLibrary.load_filters(filterNames, interp = True, lamb = lamb)
         filters_used['lpivot'] = np.array([f.lpivot.magnitude for f in filters])
         del grid['Fphot']
         grid['Fphot'] = seds
@@ -275,7 +284,7 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5'):
         #Update the magnitudes as well
         zp = np.array([f.Vega_zero_Jy.magnitude for f in filters])
         del grid['mphot']
-        grid['mphot'] = -100**(1/5.0) * np.log10(grid['Fphot'] / np.repeat(zp[np.newaxis, :], len(grid), axis = 0))
+        grid['mphot'] = -2.5 * np.log10(grid['Fphot'] / np.repeat(zp[np.newaxis, :], len(grid), axis = 0))
         g = fits.table_to_hdu(grid) #conversion step 2
         g.header = editgridheader(header, grid, filters_used)
         g.writeto(gridfile, overwrite = True)

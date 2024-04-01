@@ -101,21 +101,20 @@ def get_chisq(data, ofmod, cfmod, n_accept = 100, scale = False):
                     the lowest chi-squares.
     """
     ndata = len(data)
-    #Number of free parameters increased by one if scale is provided.
-    pp = 0
     #number of bands with FITFLAG == True that have finite fluxes
     nfinite = np.array([len(np.nonzero(~np.isnan(x['FLUX'][x['FITFLAG']]))[0]) for x in data])
     with np.errstate(divide='ignore',invalid='ignore'):
         if scale:
+            #Number of free parameters increased by one if scale is provided.
+            pp = 1
             scale_o = get_scale(data, ofmod)
             scale_c = get_scale(data, cfmod)
-            chisq_o = chisq2d(scale_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
-            chisq_c = chisq2d(scale_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
         else:
+            pp = 0
             scale_o = np.tile(1.0, (ndata, len(ofmod)))
             scale_c = np.tile(1.0, (ndata, len(cfmod)))
-            chisq_o = chisq2d(scale_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
-            chisq_c = chisq2d(scale_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
+        chisq_o = chisq2d(scale_o, data, ofmod) / (np.tile(nfinite[:, np.newaxis], len(ofmod)) - pp)
+        chisq_c = chisq2d(scale_c, data, cfmod) / (np.tile(nfinite[:, np.newaxis], len(cfmod)) - pp)
     #for each source, sort according to increase chisq. This sorted index into the model grid
     #   is stored in the modelindex arrays for each grid, and is output along with the sorted
     #   chisq values.
