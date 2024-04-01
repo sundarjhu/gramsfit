@@ -172,8 +172,27 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
             f.write_to("{0:s}".format(h.source),
                        tablename='/filters/{0}'.format(f.name), append=True)
     else:
-        mesg = "Creating filters from local files not yet implemented."
-        raise NotImplementedError(mesg)
+        tin = Table.read(infile, format='csv', names=('column', 'filtername'))
+        filterNames = list(tin['filtername'])
+        if 'det_type' in tin.colnames:
+            det_types = list(tin['det_type'])
+        else:
+            det_types = np.repeat('energy', len(tin))
+        filters = []
+        for f, d in zip(filterNames, det_types):
+            temp = Table.read(f + '.vot', format='votable')
+            if temp['Wavelength'].unit.name.strip() == '':
+                mesg = "Unit not specified in the VOTable file for filter " + f
+                mesg += ". Assuming `um`."
+                print(mesg)
+            else:
+                unitname = temp['Wavelength'].unit.name
+            g = pyp.Filter(np.array(temp['Wavelength']),
+                           np.array(temp['Transmission']),
+                           name=f,
+                           unit=unitname,
+                           dtype=d)
+            filters.append(g)
 
 
 def editgridheader(header, grid, filters):
