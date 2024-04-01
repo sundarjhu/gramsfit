@@ -115,9 +115,11 @@ def setPlotParams():
     plt.rcParams.update({'figure.max_open_warning': 0})
     return plt
 
-def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filters.hd5'):
+
+def makeFilterSet(filterNames=[], infile='filters.csv',
+                  libraryFile='filters.hd5', from_SVO=True):
     """Download filter transmission curves from the Spanish Virtual Observatory.
-    The resulting filter library is saved as an hd5 file, to be ingested into pyphot.
+    The resulting filter library is saved in hd5 format to be ingested into pyphot.
     INPUTS:
            1) filterNames, a list of the filter names as on the SVO/VOSA site. If specified, infile
            is ignored.
@@ -135,39 +137,44 @@ def makeFilterSet(filterNames = [], infile = 'filters.csv', libraryFile = 'filte
         of this line and set the detector type accordingly.
     """
     if filterNames == []:
-        tin = Table.read(infile, format = 'csv', names = ('column', 'filtername'))
+        tin = Table.read(infile, format='csv', names=('column', 'filtername'))
         filterNames = list(tin['filtername'])
-    url = 'http://svo2.cab.inta-csic.es//theory/fps3/fps.php?ID='
-    filters = []
-    #Each filter is downloaded into a temporary file via curl.
-    #   The temporary file is deleted after all the filters are downloaded.
-    for f in filterNames:
-    #for t in tin:
-        print("Downloading filter " + f)
-        _ = subprocess.call(['curl', '-o', 'temp.vot', url + f])
-        with open('temp.vot') as g:
-            content = g.readlines()
-        if any("DetectorType" in c for c in content):
-            det_type = 'photon'
-        else:
-            det_type = 'energy'
-        temp = Table.read('temp.vot', format = 'votable')
-        g = pyp.Filter(np.array(temp['Wavelength']), np.array(temp['Transmission']), \
-                       name = f.replace('/','_'), unit = temp['Wavelength'].unit.name, \
-                       dtype = det_type)
-        filters.append(g)
-    _ = os.remove("temp.vot")  # subprocess.call(['rm', 'temp.vot'])
-    #Instantiate an hdf5 object to store filter information
-    h = h5py.File(libraryFile, 'w')
-    h.create_group('filters')
-    h.close()
-    h = pyp.HDF_Library(source=libraryFile)
-    #Add filters to this object, without repetition.
-    _, u = np.unique([f.name for f in filters], return_index=True)
-    for f in list(np.array(filters)[u]):
-        # h.add_filter(f)
-        f.write_to("{0:s}".format(h.source),
-                   tablename='/filters/{0}'.format(f.name), append=True)
+    if from_SVO:
+        url = 'http://svo2.cab.inta-csic.es//theory/fps3/fps.php?ID='
+        filters = []
+        # Each filter is downloaded via curl into a temporary file,
+        # which is deleted once all the filters are downloaded.
+        for f in filterNames:
+            print("Downloading filter " + f)
+            _ = subprocess.call(['curl', '-o', 'temp.vot', url + f])
+            with open('temp.vot') as g:
+                content = g.readlines()
+            if any("DetectorType" in c for c in content):
+                det_type = 'photon'
+            else:
+                det_type = 'energy'
+            temp = Table.read('temp.vot', format='votable')
+            g = pyp.Filter(np.array(temp['Wavelength']),
+                           np.array(temp['Transmission']),
+                           name=f.replace('/', '_'),
+                           unit=temp['Wavelength'].unit.name,
+                           dtype=det_type)
+            filters.append(g)
+        _ = os.remove("temp.vot")
+        # Instantiate an hdf5 object to store filter information
+        h = h5py.File(libraryFile, 'w')
+        h.create_group('filters')
+        h.close()
+        h = pyp.HDF_Library(source=libraryFile)
+        # Add filters to this object, without repetition.
+        _, u = np.unique([f.name for f in filters], return_index=True)
+        for f in list(np.array(filters)[u]):
+            f.write_to("{0:s}".format(h.source),
+                       tablename='/filters/{0}'.format(f.name), append=True)
+    else:
+        mesg = "Creating filters from local files not yet implemented."
+        raise NotImplementedError(mesg)
+
 
 def editgridheader(header, grid, filters):
     """Modify the header to the original grid, mainly for compatibility with the FITS standard
