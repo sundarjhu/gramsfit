@@ -153,6 +153,11 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
         Service. Otherwise, read them from VOTable files.
 
     NOTES
+    Regarding detector type in SVO filters:
+        At the moment, the header in the downloaded SVO files only specifies
+        DetectorType if the filter is a photon counter (DetectorType = "1").
+        This script reads in the entire file and checks for the occurrence
+        of this line to set the detector type accordingly.
     If from_SVO is False, the VOTable files must be present in the folder
         from which this function is called.
     User-input VOTable files with filter information must contain at
