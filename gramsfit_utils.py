@@ -161,16 +161,16 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
                            dtype=det_type)
             filters.append(g)
         _ = os.remove("temp.vot")
-        # Instantiate an hdf5 object to store filter information
-        h = h5py.File(libraryFile, 'w')
-        h.create_group('filters')
-        h.close()
-        h = pyp.HDF_Library(source=libraryFile)
-        # Add filters to this object, without repetition.
-        _, u = np.unique([f.name for f in filters], return_index=True)
-        for f in list(np.array(filters)[u]):
-            f.write_to("{0:s}".format(h.source),
-                       tablename='/filters/{0}'.format(f.name), append=True)
+        # # Instantiate an hdf5 object to store filter information
+        # h = h5py.File(libraryFile, 'w')
+        # h.create_group('filters')
+        # h.close()
+        # h = pyp.HDF_Library(source=libraryFile)
+        # # Add filters to this object, without repetition.
+        # _, u = np.unique([f.name for f in filters], return_index=True)
+        # for f in list(np.array(filters)[u]):
+        #     f.write_to("{0:s}".format(h.source),
+        #                tablename='/filters/{0}'.format(f.name), append=True)
     else:
         tin = Table.read(infile, format='csv', names=('column', 'filtername'))
         filterNames = list(tin['filtername'])
@@ -193,6 +193,16 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
                            unit=unitname,
                            dtype=d)
             filters.append(g)
+    # Instantiate an hdf5 object to store filter information
+    h = h5py.File(libraryFile, 'w')
+    h.create_group('filters')
+    h.close()
+    h = pyp.HDF_Library(source=libraryFile)
+    # Add filters to this object, without repetition.
+    _, u = np.unique([f.name for f in filters], return_index=True)
+    for f in list(np.array(filters)[u]):
+        f.write_to("{0:s}".format(h.source),
+                   tablename='/filters/{0}'.format(f.name), append=True)
 
 
 def editgridheader(header, grid, filters):
