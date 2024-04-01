@@ -1,4 +1,4 @@
-from astropy.table import Table
+from astropy.table import Table, column
 from astropy.io import fits
 import numpy as np
 import os, subprocess
@@ -118,28 +118,60 @@ def setPlotParams():
 
 def makeFilterSet(filterNames=[], infile='filters.csv',
                   libraryFile='filters.hd5', from_SVO=True):
-    """Download filter transmission curves from the Spanish Virtual Observatory.
-    The resulting filter library is saved in hd5 format to be ingested into pyphot.
-    INPUTS:
-           1) filterNames, a list of the filter names as on the SVO/VOSA site. If specified, infile
-           is ignored.
-           2) infile, a two-column CSV file of which the second column must contain
-           must contain the names of the SVO/VOSA filter files to download.
-           The first column is not currently used, but can contain identifying information
-           for each filter that connects it back to the data.
-           The filter names can be in the order of occurrence in the data, and may include
-           repetitions (as it is quite possible that the data is compiled from a number of
-           differing sets of observations).
-    OUTPUT: libraryFile, an HDF file containing information about all the filters for which this is requested.
-
-    At the moment, the header in the output files only contains the DetectorType specification if the filter
-        is a photon counter (DetectorType value = "1"). We read in the entire file and check for the occurrence
-        of this line and set the detector type accordingly.
     """
-    if filterNames == []:
-        tin = Table.read(infile, format='csv', names=('column', 'filtername'))
-        filterNames = list(tin['filtername'])
+    Create an HDF5 library for a filter set specified in a CSV file.
+    The filter information is either downloaded from the SVO Filter Profile
+    Service or read from local VOTable files.
+
+    Args:
+    filterNames (list): list of SVO filter names
+        only used if from_SVO is True, ignored if infile is provided.
+    infile (str): name of the CSV file containing the filter names
+        This file must contain columns in the following order:
+        1st column: arbitrary identifier, mandatory
+        2nd column: filter name, mandatory
+            if from_SVO is True, the name must be the one used in the SVO
+                with one required modification: the '/' character must be
+                replaced by '_'.
+                For example, the 2MASS J filter, which is available at the SVO
+                page as '2MASS/2MASS.J', must be written as '2MASS_2MASS.J'
+            if from_SVO is False, the name must be the name of the VOTable file
+                (sans extension) from which filter information is to be read.
+                For example, if the filter name is set to '2MASS_J', the
+                corresponding VOTable file must be named '2MASS_J.vot' and
+                must be present in the same directory.
+        3rd column: detector type, required if from_SVO is False.
+            Can be set to 'energy' or 'photon'. If empty, 'energy' is assumed.
+            Don't guess this value; it is crucial for the correct computation
+                of synthetic photometry. This information is usually provided
+                in the documentation for the filter.
+        4th column: wavelength unit, required if from_SVO is False.
+            Can be set to 'um', 'nm', 'Angstrom', etc.
+            If empty, 'um' is assumed.
+    libraryFile (str): name of the output HDF5 library file
+    from_SVO (bool): if True, download filters from the SVO Filter Profile
+        Service. Otherwise, read them from VOTable files.
+
+    NOTES
+    If from_SVO is False, the VOTable files must be present in the folder
+        from which this function is called.
+    User-input VOTable files with filter information must contain at
+        least two columns with names 'Wavelength' and 'Transmission'.
+        The 'Wavelength' column must contain the wavelengths in the
+        same units as specified in the 4th column of `infile`.
+
+    Returns:
+    None
+    """
     if from_SVO:
+        if filterNames == []:
+            if not os.path.isfile(infile):
+                mesg = 'The input file with filter names is missing!'
+                raise FileNotFoundError(mesg)
+            else:
+                tin = Table.read(infile, format='csv', names=('column',
+                                                              'filtername'))
+                filterNames = list(tin['filtername'])
         url = 'http://svo2.cab.inta-csic.es//theory/fps3/fps.php?ID='
         filters = []
         # Each filter is downloaded via curl into a temporary file,
@@ -172,25 +204,37 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
         #     f.write_to("{0:s}".format(h.source),
         #                tablename='/filters/{0}'.format(f.name), append=True)
     else:
-        tin = Table.read(infile, format='csv', names=('column', 'filtername'))
+        tin = Table.read(infile, format='csv',
+                         names=('column', 'filtername', 'det_type',
+                                'wavelength_unit'),
+                         converters={'det_type': str,
+                                     'wavelength_unit': str},
+                         # fill_values={'det_type': '',
+                         #              'wavelength_unit': ''}
+                         )
         filterNames = list(tin['filtername'])
-        if 'det_type' in tin.colnames:
-            det_types = list(tin['det_type'])
-        else:
-            det_types = np.repeat('energy', len(tin))
+
+        for c in ['det_type', 'wavelength_unit']:
+            if type(tin[c]) is column.MaskedColumn:
+                tin[c].fill_value = ''
+                tin[c] = column.Column(data=tin[c].filled())
+        det_types = ['energy' if d.strip() == '' else d
+                     for d in tin['det_type']]
+        wavelength_units = ['um' if u.strip() == '' else u
+                            for u in tin['wavelength_unit']]
         filters = []
-        for f, d in zip(filterNames, det_types):
+        for f, d, wu in zip(filterNames, det_types,
+                            wavelength_units):
             temp = Table.read(f + '.vot', format='votable')
-            if temp['Wavelength'].unit.name.strip() == '':
+            if wu.strip() == '':
                 mesg = "Unit not specified in the VOTable file for filter " + f
                 mesg += ". Assuming `um`."
                 print(mesg)
-            else:
-                unitname = temp['Wavelength'].unit.name
+                wu = 'um'
             g = pyp.Filter(np.array(temp['Wavelength']),
                            np.array(temp['Transmission']),
                            name=f,
-                           unit=unitname,
+                           unit=wu,
                            dtype=d)
             filters.append(g)
     # Instantiate an hdf5 object to store filter information
@@ -283,7 +327,10 @@ def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5',
 
        3) outfile_suffix: a string to append to the output grid file name.
     """
-    filters_used = Table.read(infile, format = 'csv', names = ('column', 'filterName'))
+    # filters_used = Table.read(infile, format = 'csv', names = ('column', 'filterName'))
+    filters_used = Table.read(infile, format='ascii')
+    for c, newname in zip(filters_used.colnames[:2], ['column', 'filterName']):
+        filters_used.rename_column(c, newname)
     filterLibrary = pyp.get_library(fname = libraryFile)
     filterNames = [f['filterName'].replace('/','_') for f in filters_used]
     chemtype = ['o', 'c']
