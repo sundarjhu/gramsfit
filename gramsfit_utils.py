@@ -404,27 +404,32 @@ def makegrid(infile='filters.csv', libraryFile='filters.hd5',
         g.writeto(gridfile, overwrite=True)
 
 
-def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary = True, **kwargs):
+def inspect_fits(data, fit, grid, prompt='', outfile='out.csv',
+                 par_summary=True, **kwargs):
     """
     Interactively inspect a set of fits to a given SED.
     `prompt` and `outfile` set up the interactive inspection session.
-    extra keyword arguments can contain multiple fit results, each of which will be compared to `fit` in the plot.
+    extra keyword arguments can contain multiple fit results, each of which
+    will be compared to `fit` in the plot.
     Input: data - astropy table with data
         fit - astropy table with results from gramsfit
-        grid - two-element dict such that grid['o'] is the astropy table with the O-rich GRAMS grid, and grid['c']
-                contains the C-rich grid.
+        grid - two-element dict such that grid['o'] is the astropy table with
+               the O-rich GRAMS grid, and grid['c'] contains the C-rich grid.
         prompt - not yet implemented
         outfile - not yet implemented
         kwargs - not yet implemented
     """
-    ndata = len(data); n_models = len(fit[0]['modelindex_o'])
+    ndata = len(data)
+    n_models = len(fit[0]['modelindex_o'])
     distscale = (float(grid['o'].meta['DISTKPC']) / data['DKPC'])**2
     k = np.nonzero(['FILT_' in k for k in grid['o'].meta.keys()])[0]
-    filternames = [f.split(',')[0].replace('(', '') for f in np.array(list(grid['o'].meta.values()))[k]]
-    lpivot = np.array([float(f.split(',')[1].replace(')', '')) for f in np.array(list(grid['o'].meta.values()))[k]])
+    filternames = [f.split(',')[0].replace('(', '')
+                   for f in np.array(list(grid['o'].meta.values()))[k]]
+    lpivot = np.array([float(f.split(',')[1].replace(')', ''))
+                       for f in np.array(list(grid['o'].meta.values()))[k]])
 
     plt = setPlotParams()
-    plt.figure(figsize = (12, 12))
+    plt.figure(figsize=(12, 12))
     color = {'o': 'blue', 'c': 'red'}
     xlim = [.1, 100]
     for i in range(ndata):
@@ -435,44 +440,58 @@ def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary 
         # text = [r'$\chi^2 = {}$'.format(np.round(fit[i]['chisq_' + chemtype][0], decimals = 1)), \
         #         r'$\dot{M}_{\rm d}/{\rm M}_\odot~{\rm yr}^{-1} = {:0.1e}$'.format(fit[i]['DPR_' + chemtype]), \
         #         r'$L/{\rm L}_\odot = {:0.2e}$'.format(fit[i]['Lum_' + chemtype])]
-        #Wrapper to ignore UserWarnings about converting Masked values to Nan.
+        # Wrapper to ignore UserWarnings about converting Masked values to Nan.
         warnings.filterwarnings('ignore')
         title = 'ID = ' + str(fit[i]['ID']) + ', chemtype = ' + chemtype
-        xscale = 'log'; yscale = 'log'
-        xlabel = r'$\lambda (\mu$' + 'm)'; ylabel = r'$F_{\nu}$' + '(Jy)'
+        xscale = 'log'
+        yscale = 'log'
+        xlabel = r'$\lambda (\mu$' + 'm)'
+        ylabel = r'$F_{\nu}$' + '(Jy)'
         if par_summary:
-            fig, (a0, a1) = plt.subplots(2, 1, gridspec_kw = {'height_ratios': [3, 1]}, constrained_layout = True)
+            fig, (a0, a1) = plt.subplots(2, 1,
+                                         gridspec_kw={'height_ratios': [3, 1]},
+                                         constrained_layout=True)
             a0.set_title(title)
-            a0.set_xscale(xscale); a0.set_yscale(xscale)
-            a0.set_xlabel(xlabel); a0.set_ylabel(ylabel)
+            a0.set_xscale(xscale)
+            a0.set_yscale(yscale)
+            a0.set_xlabel(xlabel)
+            a0.set_ylabel(ylabel)
             _ = a0.set_xlim(xlim)
             _ = a0.set_ylim(1e-5 * ylim, 1.2 * ylim)
         else:
             a0 = plt.copy()
             a0.title(title)
-            a0.xscale(xscale); a0.yscale(xscale)
-            a0.xlabel(xlabel); a0.ylabel(ylabel)
+            a0.xscale(xscale)
+            a0.yscale(yscale)
+            a0.xlabel(xlabel)
+            a0.ylabel(ylabel)
             _ = a0.xlim(xlim)
             _ = a0.ylim(1e-5 * ylim, 1.2 * ylim)
         for j in range(n_models):
-            _ = a0.plot(grid[chemtype][fit[modelindex][i, 0]]['Lspec'], \
-                        grid[chemtype][fit[modelindex][i, j]]['Fspec'] * fit[scale][i, j] * distscale[i], color = 'grey', alpha = 0.5)
-        #Best fit model
-        _ = a0.plot(grid[chemtype][fit[modelindex][i, 0]]['Lspec'], \
-                    grid[chemtype][fit[modelindex][i, 0]]['Fspec'] * fit[scale][i, 0] * distscale[i], color = color[chemtype])
-        #Alternate best fit models from kwargs
+            _ = a0.plot(grid[chemtype][fit[modelindex][i, 0]]['Lspec'],
+                        grid[chemtype][fit[modelindex][i, j]]['Fspec'] *
+                        fit[scale][i, j] * distscale[i],
+                        color='grey', alpha=0.5)
+        # Best fit model
+        _ = a0.plot(grid[chemtype][fit[modelindex][i, 0]]['Lspec'],
+                    grid[chemtype][fit[modelindex][i, 0]]['Fspec'] *
+                    fit[scale][i, 0] * distscale[i], color=color[chemtype])
+        # Alternate best fit models from kwargs
         for kw in kwargs:
             pass
-        #Overlay data
-        _ = a0.plot(lpivot[data[i]['BANDMAP']], data[i]['FLUX'], 'ko', linestyle = '')
-        _ = a0.errorbar(lpivot[data[i]['BANDMAP']], data[i]['FLUX'], fmt = 'ko', yerr = data[i]['DFLUX'], linestyle = '')
-        #Overlay text
+        # Overlay data
+        _ = a0.plot(lpivot[data[i]['BANDMAP']], data[i]['FLUX'],
+                    'ko', linestyle='')
+        _ = a0.errorbar(lpivot[data[i]['BANDMAP']], data[i]['FLUX'],
+                        fmt='ko', yerr=data[i]['DFLUX'], linestyle='')
+        # Overlay text
         loc = [0.2, ylim * 1.1]
         # for i in range(len(text)):
         #     a0.text(loc[0], loc[1] / (i * 0.1 + 1), text[i])
         if par_summary:
-            gramsfit.par_summary(a1, data[i], grid, fit[i], n_models = n_models)
-            #fig.tight_layout()
+            gramsfit.par_summary(a1, data[i], grid, fit[i],
+                                 n_models=n_models)
+            # fig.tight_layout()
             fig.show()
         else:
             plt.show()
