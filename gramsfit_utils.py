@@ -1,7 +1,8 @@
 from astropy.table import Table, column
 from astropy.io import fits
 import numpy as np
-import os, subprocess
+import os
+import subprocess
 import pyphot as pyp
 import h5py
 from matplotlib import pyplot as plt
@@ -74,9 +75,11 @@ def synthphot(lam, fnu, pypLibrary, filterNames=None,
         filterNames = [ff['filtername'].replace('/', '_') for ff in f]
 
     ezlam = lam.value * pyp.unit[lam.unit.to_string()]
-    # # The following ensures that the interpolated grid is high enough resolution
-    # #       because remember: the GRAMS grid has crappy resolution!
-    # ezlam = np.geomspace(lam.value.min(), lam.value.max(), 1001) * pyp.unit[lam.unit.to_string()]
+    # # The following ensures that the interpolated grid
+    # #     has high enough resolution
+    # #     because remember: the GRAMS grid has crappy resolution!
+    # ezlam = np.geomspace(lam.value.min(), lam.value.max(),
+    #                      1001) * pyp.unit[lam.unit.to_string()]
     filters = fL.load_filters(filterNames, interp=True, lamb=ezlam)
     # need to automatically grab the unit for lpivot
     lpivots = np.array([f.lpivot.magnitude for f in filters])
@@ -101,12 +104,12 @@ def synthphot(lam, fnu, pypLibrary, filterNames=None,
 
 
 def setPlotParams():
-    plt.figure(figsize = (8, 8))
+    plt.figure(figsize=(8, 8))
     params = {'legend.fontsize': 'x-large',
-              'axes.labelsize':20,
-              'axes.titlesize':20,
-              'xtick.labelsize':20,
-              'ytick.labelsize':20,
+              'axes.labelsize': 20,
+              'axes.titlesize': 20,
+              'xtick.labelsize': 20,
+              'ytick.labelsize': 20,
               'text.usetex': True,
               'text.latex.preamble': r'\usepackage{bm}',
               'figure.max_open_warning': 0
@@ -255,48 +258,60 @@ def makeFilterSet(filterNames=[], infile='filters.csv',
 
 
 def editgridheader(header, grid, filters):
-    """Modify the header to the original grid, mainly for compatibility with the FITS standard
-    The pivot wavelengths are written into the header, and can be retrieved as follows:
-    grid = Table.read('grams_o.fits', format = 'fits')
-    lpivot = np.array([float(grid.meta['FILT_' + str(i+1)].split(',')[1][:-1]) for i in range(len(grid[0]['Fphot']))])
+    """
+    Modify the header to the original grid, mainly for compatibility
+        with the FITS standard.
+    Pivot wavelengths, written into the header, can be retrieved as follows:
+        grid = Table.read('grams_o.fits', format = 'fits')
+        >> lpivot = np.array([float(grid.meta['FILT_' +
+        >>                                    str(i+1)].split(',')[1][:-1])
+        >>                    for i in range(len(grid[0]['Fphot']))])
     """
     keys_orig = [k for k in header.keys()]
     values_orig = [v for v in header.values()]
     comments_orig = [v for v in header.comments]
     h = fits.Header()
     loc = [i for i, h in enumerate(header) if '----' in h]
-    #loc = [i for i, h in enumerate(header) if 'DESC' in h]
-    #loc2 = [i for i, h in enumerate(header) if 'TTYPE1' in h]
-    #loc = [loc[0], loc2[0] - 2]
+    # loc = [i for i, h in enumerate(header) if 'DESC' in h]
+    # loc2 = [i for i, h in enumerate(header) if 'TTYPE1' in h]
+    # loc = [loc[0], loc2[0] - 2]
     for i in range(loc[0]):
-        h.append((keys_orig[i], values_orig[i], comments_orig[i]), end = True)
-        #h[keys_orig[i]] = values_orig[i]
-    #the following lists are first sized by the non-filter elements
-    keys = ['DESC', 'GRAMSREF', 'NMODELS', 'PHOTREF', 'DUSTTYPE', 'OPTCREF', 'SIZEDIST', 'WLRANGE', 'DISTKPC']
+        h.append((keys_orig[i], values_orig[i], comments_orig[i]),
+                 end = True)
+        # h[keys_orig[i]] = values_orig[i]
+    # the following lists are first sized by the non-filter elements
+    keys = ['DESC', 'GRAMSREF', 'NMODELS', 'PHOTREF', 'DUSTTYPE', 'OPTCREF',
+            'SIZEDIST', 'WLRANGE', 'DISTKPC']
     values = list(np.repeat(80*' ', len(keys)))
     comments = list(np.repeat(80*' ', len(keys)))
-    #Now, they are populated and extended
+    # Now, they are populated and extended
     keys.extend(['FILT_' + str(i+1) for i in range(len(filters))])
     values[0] = 'The GRAMS O-rich grid for O-rich AGB and RSG stars'
     values[1] = 'Sargent, Srinivasan, & Meixner 2011 ApJ 728 93'
     values[2] = len(grid)
-    values[3] = 'Kucinskas et al. (2005 A&A 442 281; 2006 A&A 452 1021), log(Z/Z_sun)=-0.5'
+    values[3] = 'Kucinskas et al. (2005 A&A 442 281; 2006 A&A 452 1021), '
+    values[3] += 'log(Z/Z_sun)=-0.5'
     values[4] = 'Oxygen-deficient silicates'
     values[5] = 'Ossenkopf et al. 1992 A&A 261 567'
-    values[6] = 'KMH (Kim et al. 1994 ApJ 422 164) with (a_min, a_0) = (0.01, 0.1) \mu m'
-    #If C-rich grid, change some of the above values
-    if not(any('O-rich' in str(v) for v in values_orig)):
+    values[6] = 'KMH (Kim et al. 1994 ApJ 422 164) with (a_min, a_0) ='
+    values[6] += r' (0.01, 0.1) \mu m'
+    # If C-rich grid, change some of the above values
+    if not any('O-rich' in str(v) for v in values_orig):
         values[0] = 'The GRAMS C-rich grid for C-rich AGB stars'
         values[1] = 'Srinivasan, Sargent, & Meixner 2011 A&A 532A 54'
         values[3] = 'Aringer et al. 2009 A&A 503 913'
         values[4] = 'Amorphous carbon and 10% by mass of SiC'
-        values[5] = 'Zubko et al. 1996 MNRAS 282 1321, Pegourie 1988 A&A 194, 335'
-        values[6] = 'KMH (Kim et al. 1994 ApJ 422 164) with (a_min, a_0) = (0.01, 1) \mu m'
-    lmin = np.round(grid[0]['Lspec'].min(), decimals = 2); lmax = np.round(grid[0]['Lspec'].max(), decimals = 2)
-    values[7] = '~' + str(lmin) + ' to ~' + str(lmax) + ' \mu m'
-    values[8] = '50.12' #Hard-coded
+        values[5] = 'Zubko et al. 1996 MNRAS 282 1321,'
+        values[5] += 'Pegourie 1988 A&A 194, 335'
+        values[6] = 'KMH (Kim et al. 1994 ApJ 422 164) with (a_min, a_0) ='
+        values[6] += r' (0.01, 1) \mu m'
+    lmin = np.round(grid[0]['Lspec'].min(), decimals=2)
+    lmax = np.round(grid[0]['Lspec'].max(), decimals=2)
+    values[7] = '~' + str(lmin) + ' to ~' + str(lmax) + r' \mu m'
+    values[8] = '50.12'  # LMC distance hard-coded
     for f in filters:
-        values.append('(' + f['filterName'] + ',' + str(np.round(f['lpivot'], decimals = 3)) + ')')
+        values.append('(' + f['filterName'] + ',' +
+                      str(np.round(f['lpivot'], decimals=3)) + ')')
     comments[0] = ''
     comments[1] = 'Source for the grid'
     comments[2] = 'Number of models in the grid'
@@ -309,73 +324,85 @@ def editgridheader(header, grid, filters):
     for i in range(len(filters)):
         comments.append('Name/wavelength of filter #' + str(i+1))
     for i in range(len(keys)):
-        h.append((keys[i], values[i], comments[i]), end = True)
+        h.append((keys[i], values[i], comments[i]), end=True)
     for i in range(loc[1]+1, len(header)):
-        h.append((keys_orig[i], values_orig[i], comments_orig[i]), end = True)
+        h.append((keys_orig[i], values_orig[i], comments_orig[i]), end=True)
     return h
 
-def makegrid(infile = 'filters.csv', libraryFile = 'filters.hd5',
+
+def makegrid(infile='filters.csv', libraryFile='filters.hd5',
              outfile_suffix=''):
-    """Compute GRAMS synthetic photometry in all the bands specified in infile, using the information
-    from the filter library.
+    """Compute GRAMS synthetic photometry in all the bands specified in infile,
+        using the information from the filter library.
     INPUTS
        1) infile: a two-column CSV file of which the second column must contain
-       must contain the names of the SVO/VOSA filter files to download. The first 
-       column is not currently used, but can contain identifying information for 
+       must contain the names of the SVO/VOSA filter files to download. The 1st
+       column (not currently used), can contain identifying information for
        each filter that connects it back to the data.
-       The filter names can be in the order of occurrence in the data, and may include
-       repetitions (as it is quite possible that the data is compiled from a number of
-       differing sets of observations).
+       The filter names can be in the order of occurrence in the data,
+       and may include repetitions (as it is quite possible that the data is
+       compiled from a number of differing sets of observations).
        NOTE: this file must have a one-line header.
 
        2) libraryFile: the name of for the output hdf5 library.
 
        3) outfile_suffix: a string to append to the output grid file name.
     """
-    # filters_used = Table.read(infile, format = 'csv', names = ('column', 'filterName'))
+    # filters_used = Table.read(infile, format = 'csv',
+    #                           names = ('column', 'filterName'))
     filters_used = Table.read(infile, format='ascii')
     for c, newname in zip(filters_used.colnames[:2], ['column', 'filterName']):
         filters_used.rename_column(c, newname)
-    filterLibrary = pyp.get_library(fname = libraryFile)
-    filterNames = [f['filterName'].replace('/','_') for f in filters_used]
+    filterLibrary = pyp.get_library(fname=libraryFile)
+    filterNames = [f['filterName'].replace('/', '_') for f in filters_used]
     chemtype = ['o', 'c']
-    #Links to the grid files on Google Drive. Is there a more elegant solution?
-    file_link = {'o': 'https://ndownloader.figshare.com/files/9684331', \
+    file_link = {'o': 'https://ndownloader.figshare.com/files/9684331',
                  'c': 'https://ndownloader.figshare.com/files/9684328'}
     for c in chemtype:
         gridfile = 'grams_' + c + outfile_suffix + '.fits'
         if os.path.isfile(gridfile):
             subprocess.call(['rm', gridfile])
-        grid, header = fits.getdata(file_link[c], 1, header = True)
-        #The original FITS_rec object is turned into an astropy Table for manipulation.
-        #   It is then turned into a HDU object for output.
-        grid = Table(grid) #conversion step 1
+        grid, header = fits.getdata(file_link[c], 1, header=True)
+        # The original FITS_rec object is turned into an astropy Table
+        #   for manipulation. It is then turned into a HDU object for output.
+        grid = Table(grid)  # conversion step 1
         print("Renaming 'MLR' column to 'DPR'")
-        grid.rename_column('MLR', 'DPR') #Changing MLR column name to DPR
+        grid.rename_column('MLR', 'DPR')  # Changing MLR column name to DPR
         inlam = grid[0]['Lspec']
         infnu = grid['Fspec']
         # infnu_star = grid['Fstar']
 
-        _, seds = synthphot(inlam * units.um, infnu * units.Jy, filterLibrary, filterNames)
+        _, seds = synthphot(inlam * units.um, infnu * units.Jy,
+                            filterLibrary, filterNames)
 
-        # _, seds = pyp.extractSEDs(inlam, infnu, filters, Fnu=True, absFlux=False)
-        # _, seds_star = pyp.extractSEDs(inlam, infnu_star, filters, Fnu=True, absFlux=False)
-        # filters = filterLibrary.load_filters(filterNames, interp = True, lamb = inlam * pyp.unit['micron'])
-        # The following ensures that the interpolated grid is high enough resolution
+        # _, seds = pyp.extractSEDs(inlam, infnu, filters, Fnu=True,
+        #                           absFlux=False)
+        # _, seds_star = pyp.extractSEDs(inlam, infnu_star, filters, Fnu=True,
+        #                                absFlux=False)
+        # filters = filterLibrary.load_filters(filterNames,
+        #                                      interp=True,
+        #                                      lamb=inlam * pyp.unit['micron'])
+        # Ensures that the interpolated grid has adequate resolution
         #       because remember: the GRAMS grid has crappy resolution!
-        lamb = np.geomspace(inlam.min(), inlam.max(), 1000) * pyp.unit['micron']
-        filters = filterLibrary.load_filters(filterNames, interp = True, lamb = lamb)
-        filters_used['lpivot'] = np.array([f.lpivot.magnitude for f in filters])
+        lamb = np.geomspace(inlam.min(), inlam.max(),
+                            1000) * pyp.unit['micron']
+        filters = filterLibrary.load_filters(filterNames,
+                                             interp=True, lamb=lamb)
+        filters_used['lpivot'] = np.array([f.lpivot.magnitude
+                                           for f in filters])
         del grid['Fphot']
         grid['Fphot'] = seds
         # grid['Fphot_star'] = seds_star
-        #Update the magnitudes as well
+        # Update the magnitudes as well
         zp = np.array([f.Vega_zero_Jy.magnitude for f in filters])
         del grid['mphot']
-        grid['mphot'] = -2.5 * np.log10(grid['Fphot'] / np.repeat(zp[np.newaxis, :], len(grid), axis = 0))
-        g = fits.table_to_hdu(grid) #conversion step 2
+        grid['mphot'] = -2.5 * np.log10(
+                grid['Fphot'] / np.repeat(zp[np.newaxis, :],
+                                          len(grid), axis=0))
+        g = fits.table_to_hdu(grid)  # conversion step 2
         g.header = editgridheader(header, grid, filters_used)
-        g.writeto(gridfile, overwrite = True)
+        g.writeto(gridfile, overwrite=True)
+
 
 def inspect_fits(data, fit, grid, prompt = '', outfile = 'out.csv', par_summary = True, **kwargs):
     """
